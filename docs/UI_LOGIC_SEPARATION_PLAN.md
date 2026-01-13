@@ -10,10 +10,10 @@
 
 | PR | Description | Status | Commit |
 |----|-------------|--------|--------|
-| #1 | Add message types and controller skeleton | 🔄 In Progress | - |
-| #2 | Implement controller business logic | ⏳ Pending | - |
-| #3 | Add controller integration with backward compatibility | ⏳ Pending | - |
-| #4 | Add TUI message handlers | ⏳ Pending | - |
+| #1 | Add message types and controller skeleton | ✅ Complete | e64ba9b |
+| #2 | Implement controller business logic | ✅ Complete | bb7a5b7 |
+| #3 | Add controller integration with backward compatibility | ✅ Complete | 79a76aa |
+| #4 | Add TUI message handlers | ✅ Complete | 503fded |
 | #5 | Remove deprecated direct update code | ⏳ Pending | - |
 
 ---

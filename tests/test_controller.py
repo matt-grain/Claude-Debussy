@@ -577,6 +577,7 @@ class TestControllerIntegration:
         ui.create_app()
 
         # Should return controller's context
+        assert ui._controller is not None
         assert ui.context is ui._controller.context
 
     def test_start_delegates_to_controller(self) -> None:
@@ -842,3 +843,470 @@ class TestBackwardCompatibility:
         assert app.ui_context.session_input_tokens == 100
         assert app.ui_context.session_output_tokens == 50
         assert app.ui_context.total_cost_usd == 0.05
+
+
+# =============================================================================
+# PR #4: TUI Message Handler Tests
+# =============================================================================
+
+
+class TestTUIMessageHandlers:
+    """Test TUI message handlers (PR #4).
+
+    These tests verify that the TUI correctly handles messages emitted by
+    the OrchestrationController.
+    """
+
+    def test_on_orchestration_started_updates_hud(self) -> None:
+        """on_orchestration_started() should update HUD phase info."""
+        from unittest.mock import MagicMock, patch
+
+        from debussy.ui.messages import OrchestrationStarted
+        from debussy.ui.tui import DebussyTUI, HUDHeader
+
+        app = DebussyTUI()
+        mock_header = MagicMock(spec=HUDHeader)
+
+        with patch.object(app, "query_one", return_value=mock_header):
+            message = OrchestrationStarted("test-plan", 5)
+            app.on_orchestration_started(message)
+
+        assert mock_header.phase_info == "0/5: Starting..."
+
+    def test_on_phase_changed_updates_hud(self) -> None:
+        """on_phase_changed() should update HUD with phase info."""
+        from unittest.mock import MagicMock, patch
+
+        from debussy.ui.messages import PhaseChanged
+        from debussy.ui.tui import DebussyTUI, HUDHeader
+
+        app = DebussyTUI()
+        mock_header = MagicMock(spec=HUDHeader)
+
+        with patch.object(app, "query_one", return_value=mock_header):
+            message = PhaseChanged(
+                phase_id="phase-1",
+                phase_title="Setup Phase",
+                phase_index=2,
+                total_phases=5,
+            )
+            app.on_phase_changed(message)
+
+        assert mock_header.phase_info == "2/5: Setup Phase"
+
+    def test_on_state_changed_updates_hud_running(self) -> None:
+        """on_state_changed() should update HUD status for RUNNING state."""
+        from unittest.mock import MagicMock, patch
+
+        from debussy.ui.messages import StateChanged
+        from debussy.ui.tui import DebussyTUI, HUDHeader
+
+        app = DebussyTUI()
+        mock_header = MagicMock(spec=HUDHeader)
+
+        with patch.object(app, "query_one", return_value=mock_header):
+            message = StateChanged(UIState.RUNNING)
+            app.on_state_changed(message)
+
+        assert mock_header.status == "Running"
+        assert mock_header.status_style == "green"
+
+    def test_on_state_changed_updates_hud_paused(self) -> None:
+        """on_state_changed() should update HUD status for PAUSED state."""
+        from unittest.mock import MagicMock, patch
+
+        from debussy.ui.messages import StateChanged
+        from debussy.ui.tui import DebussyTUI, HUDHeader
+
+        app = DebussyTUI()
+        mock_header = MagicMock(spec=HUDHeader)
+
+        with patch.object(app, "query_one", return_value=mock_header):
+            message = StateChanged(UIState.PAUSED)
+            app.on_state_changed(message)
+
+        assert mock_header.status == "Paused"
+        assert mock_header.status_style == "yellow"
+
+    def test_on_token_stats_updated_updates_hud(self) -> None:
+        """on_token_stats_updated() should update HUD token display."""
+        from unittest.mock import MagicMock, patch
+
+        from debussy.ui.messages import TokenStatsUpdated
+        from debussy.ui.tui import DebussyTUI, HUDHeader
+
+        app = DebussyTUI()
+        mock_header = MagicMock(spec=HUDHeader)
+
+        with patch.object(app, "query_one", return_value=mock_header):
+            message = TokenStatsUpdated(
+                session_input_tokens=1500,
+                session_output_tokens=500,
+                total_cost_usd=0.15,
+                context_pct=25,
+            )
+            app.on_token_stats_updated(message)
+
+        assert mock_header.total_tokens == 1500
+        assert mock_header.cost_usd == 0.15
+        assert mock_header.context_pct == 25
+
+    def test_on_log_message_raw_always_writes(self) -> None:
+        """on_log_message() with raw=True should always write to log."""
+        from unittest.mock import patch
+
+        from debussy.ui.messages import LogMessage
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        app.ui_context.verbose = False  # Verbose OFF
+
+        with patch.object(app, "write_log") as mock_write:
+            message = LogMessage("Important message", raw=True)
+            app.on_log_message(message)
+
+        mock_write.assert_called_once_with("Important message")
+
+    def test_on_log_message_respects_verbose_on(self) -> None:
+        """on_log_message() with raw=False should respect verbose=True."""
+        from unittest.mock import patch
+
+        from debussy.ui.messages import LogMessage
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        app.ui_context.verbose = True  # Verbose ON
+
+        with patch.object(app, "write_log") as mock_write:
+            message = LogMessage("Debug message", raw=False)
+            app.on_log_message(message)
+
+        mock_write.assert_called_once_with("Debug message")
+
+    def test_on_log_message_respects_verbose_off(self) -> None:
+        """on_log_message() with raw=False should respect verbose=False."""
+        from unittest.mock import patch
+
+        from debussy.ui.messages import LogMessage
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        app.ui_context.verbose = False  # Verbose OFF
+
+        with patch.object(app, "write_log") as mock_write:
+            message = LogMessage("Debug message", raw=False)
+            app.on_log_message(message)
+
+        mock_write.assert_not_called()
+
+    def test_on_hud_message_set_shows_message(self) -> None:
+        """on_hud_message_set() should show message in HUD."""
+        from unittest.mock import patch
+
+        from debussy.ui.messages import HUDMessageSet
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+
+        with (
+            patch.object(app, "set_hud_message") as mock_set,
+            patch.object(app, "set_timer") as mock_timer,
+        ):
+            message = HUDMessageSet("Pause requested", clear_after=3.0)
+            app.on_hud_message_set(message)
+
+        mock_set.assert_called_once_with("Pause requested")
+        mock_timer.assert_called_once()
+
+    def test_on_hud_message_set_no_clear_when_zero(self) -> None:
+        """on_hud_message_set() should not set timer when clear_after=0."""
+        from unittest.mock import patch
+
+        from debussy.ui.messages import HUDMessageSet
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+
+        with (
+            patch.object(app, "set_hud_message") as mock_set,
+            patch.object(app, "set_timer") as mock_timer,
+        ):
+            message = HUDMessageSet("Persistent message", clear_after=0)
+            app.on_hud_message_set(message)
+
+        mock_set.assert_called_once_with("Persistent message")
+        mock_timer.assert_not_called()
+
+    def test_on_verbose_toggled_updates_hotkey_bar(self) -> None:
+        """on_verbose_toggled() should update hotkey bar verbose state."""
+        from unittest.mock import MagicMock, patch
+
+        from debussy.ui.messages import VerboseToggled
+        from debussy.ui.tui import DebussyTUI, HotkeyBar
+
+        app = DebussyTUI()
+        mock_hotkey_bar = MagicMock(spec=HotkeyBar)
+
+        with patch.object(app, "query_one", return_value=mock_hotkey_bar):
+            message = VerboseToggled(is_verbose=False)
+            app.on_verbose_toggled(message)
+
+        assert mock_hotkey_bar.verbose is False
+
+    def test_on_verbose_toggled_true(self) -> None:
+        """on_verbose_toggled() should handle verbose=True."""
+        from unittest.mock import MagicMock, patch
+
+        from debussy.ui.messages import VerboseToggled
+        from debussy.ui.tui import DebussyTUI, HotkeyBar
+
+        app = DebussyTUI()
+        mock_hotkey_bar = MagicMock(spec=HotkeyBar)
+
+        with patch.object(app, "query_one", return_value=mock_hotkey_bar):
+            message = VerboseToggled(is_verbose=True)
+            app.on_verbose_toggled(message)
+
+        assert mock_hotkey_bar.verbose is True
+
+    def test_on_orchestration_completed_success(self) -> None:
+        """on_orchestration_completed() should log success message."""
+        from unittest.mock import patch
+
+        from debussy.ui.messages import OrchestrationCompleted
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+
+        with patch.object(app, "write_log") as mock_write:
+            message = OrchestrationCompleted(
+                run_id="run-123", success=True, message="All phases complete"
+            )
+            app.on_orchestration_completed(message)
+
+        mock_write.assert_called_once()
+        call_args = mock_write.call_args[0][0]
+        assert "green" in call_args
+        assert "All phases complete" in call_args
+
+    def test_on_orchestration_completed_failure(self) -> None:
+        """on_orchestration_completed() should log failure message."""
+        from unittest.mock import patch
+
+        from debussy.ui.messages import OrchestrationCompleted
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+
+        with patch.object(app, "write_log") as mock_write:
+            message = OrchestrationCompleted(
+                run_id="run-456", success=False, message="Phase 2 failed"
+            )
+            app.on_orchestration_completed(message)
+
+        mock_write.assert_called_once()
+        call_args = mock_write.call_args[0][0]
+        assert "red" in call_args
+        assert "Phase 2 failed" in call_args
+
+
+class TestMessageHandlerIntegration:
+    """Integration tests for message handlers with controller (PR #4).
+
+    These tests verify that messages emitted by the controller are correctly
+    received and handled by the TUI.
+    """
+
+    def test_controller_start_triggers_handler(self) -> None:
+        """Controller.start() should trigger on_orchestration_started handler."""
+        from unittest.mock import patch
+
+        from debussy.ui.controller import OrchestrationController
+        from debussy.ui.messages import OrchestrationStarted
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        controller = OrchestrationController(app)
+        app.set_controller(controller)
+
+        # Capture posted message
+        posted_messages = []
+        with patch.object(app, "post_message", side_effect=posted_messages.append):
+            controller.start("test-plan", 3)
+
+        assert len(posted_messages) == 1
+        assert isinstance(posted_messages[0], OrchestrationStarted)
+        assert posted_messages[0].plan_name == "test-plan"
+        assert posted_messages[0].total_phases == 3
+
+    def test_controller_set_phase_triggers_handler(self) -> None:
+        """Controller.set_phase() should trigger on_phase_changed handler."""
+        from unittest.mock import patch
+
+        from debussy.ui.controller import OrchestrationController
+        from debussy.ui.messages import PhaseChanged
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        controller = OrchestrationController(app)
+        app.set_controller(controller)
+        controller.context.total_phases = 5
+
+        mock_phase = Mock()
+        mock_phase.id = "build"
+        mock_phase.title = "Build Phase"
+
+        posted_messages = []
+        with patch.object(app, "post_message", side_effect=posted_messages.append):
+            controller.set_phase(mock_phase, 2)
+
+        assert len(posted_messages) == 1
+        assert isinstance(posted_messages[0], PhaseChanged)
+        assert posted_messages[0].phase_id == "build"
+        assert posted_messages[0].phase_title == "Build Phase"
+        assert posted_messages[0].phase_index == 2
+
+    def test_controller_set_state_triggers_handler(self) -> None:
+        """Controller.set_state() should trigger on_state_changed handler."""
+        from unittest.mock import patch
+
+        from debussy.ui.controller import OrchestrationController
+        from debussy.ui.messages import StateChanged
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        controller = OrchestrationController(app)
+        app.set_controller(controller)
+
+        posted_messages = []
+        with patch.object(app, "post_message", side_effect=posted_messages.append):
+            controller.set_state(UIState.PAUSED)
+
+        assert len(posted_messages) == 1
+        assert isinstance(posted_messages[0], StateChanged)
+        assert posted_messages[0].state == UIState.PAUSED
+
+    def test_controller_toggle_verbose_triggers_handlers(self) -> None:
+        """Controller.toggle_verbose() should trigger both handlers."""
+        from unittest.mock import patch
+
+        from debussy.ui.controller import OrchestrationController
+        from debussy.ui.messages import HUDMessageSet, VerboseToggled
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        controller = OrchestrationController(app)
+        app.set_controller(controller)
+
+        posted_messages = []
+        with patch.object(app, "post_message", side_effect=posted_messages.append):
+            controller.toggle_verbose()
+
+        # Should emit VerboseToggled and HUDMessageSet
+        assert len(posted_messages) == 2
+        assert any(isinstance(m, VerboseToggled) for m in posted_messages)
+        assert any(isinstance(m, HUDMessageSet) for m in posted_messages)
+
+    def test_controller_queue_action_triggers_hud_message(self) -> None:
+        """Controller.queue_action() should trigger HUD message."""
+        from unittest.mock import patch
+
+        from debussy.ui.controller import OrchestrationController
+        from debussy.ui.messages import HUDMessageSet
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        controller = OrchestrationController(app)
+        app.set_controller(controller)
+
+        posted_messages = []
+        with patch.object(app, "post_message", side_effect=posted_messages.append):
+            controller.queue_action(UserAction.PAUSE)
+
+        assert len(posted_messages) == 1
+        assert isinstance(posted_messages[0], HUDMessageSet)
+        assert "Pause" in posted_messages[0].message
+
+    def test_controller_update_token_stats_triggers_handler(self) -> None:
+        """Controller.update_token_stats() should trigger handler."""
+        from unittest.mock import patch
+
+        from debussy.ui.controller import OrchestrationController
+        from debussy.ui.messages import TokenStatsUpdated
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        controller = OrchestrationController(app)
+        app.set_controller(controller)
+
+        posted_messages = []
+        with patch.object(app, "post_message", side_effect=posted_messages.append):
+            controller.update_token_stats(1000, 500, 0.05, 50_000, 200_000)
+
+        assert len(posted_messages) == 1
+        assert isinstance(posted_messages[0], TokenStatsUpdated)
+        assert posted_messages[0].session_input_tokens == 1500  # input + output
+        assert posted_messages[0].context_pct == 25
+
+    def test_controller_complete_triggers_handler(self) -> None:
+        """Controller.complete() should trigger on_orchestration_completed handler."""
+        from unittest.mock import patch
+
+        from debussy.ui.controller import OrchestrationController
+        from debussy.ui.messages import OrchestrationCompleted
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        controller = OrchestrationController(app)
+        app.set_controller(controller)
+
+        posted_messages = []
+        with patch.object(app, "post_message", side_effect=posted_messages.append):
+            controller.complete("run-abc", True, "Success!")
+
+        assert len(posted_messages) == 1
+        assert isinstance(posted_messages[0], OrchestrationCompleted)
+        assert posted_messages[0].run_id == "run-abc"
+        assert posted_messages[0].success is True
+        assert posted_messages[0].message == "Success!"
+
+    def test_controller_log_message_triggers_handler(self) -> None:
+        """Controller.log_message() should trigger on_log_message handler."""
+        from unittest.mock import patch
+
+        from debussy.ui.controller import OrchestrationController
+        from debussy.ui.messages import LogMessage
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        controller = OrchestrationController(app)
+        app.set_controller(controller)
+
+        posted_messages = []
+        with patch.object(app, "post_message", side_effect=posted_messages.append):
+            controller.log_message("Test log entry")
+
+        assert len(posted_messages) == 1
+        assert isinstance(posted_messages[0], LogMessage)
+        assert posted_messages[0].message == "Test log entry"
+        assert posted_messages[0].raw is False
+
+    def test_controller_log_message_raw_triggers_handler(self) -> None:
+        """Controller.log_message_raw() should trigger handler with raw=True."""
+        from unittest.mock import patch
+
+        from debussy.ui.controller import OrchestrationController
+        from debussy.ui.messages import LogMessage
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        controller = OrchestrationController(app)
+        app.set_controller(controller)
+
+        posted_messages = []
+        with patch.object(app, "post_message", side_effect=posted_messages.append):
+            controller.log_message_raw("Important message")
+
+        assert len(posted_messages) == 1
+        assert isinstance(posted_messages[0], LogMessage)
+        assert posted_messages[0].raw is True

@@ -32,6 +32,19 @@ from debussy.runners.claude import pid_registry
 from debussy.ui.base import STATUS_MAP, UIContext, UIState, UserAction, format_duration
 from debussy.ui.controller import OrchestrationController
 
+# NOTE: These message imports are needed at RUNTIME for Textual's on_* message handlers.
+# Textual's message dispatch system requires the actual types to be available.
+from debussy.ui.messages import (  # noqa: TC001
+    HUDMessageSet,
+    LogMessage,
+    OrchestrationCompleted,
+    OrchestrationStarted,
+    PhaseChanged,
+    StateChanged,
+    TokenStatsUpdated,
+    VerboseToggled,
+)
+
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -487,6 +500,84 @@ class DebussyTUI(App):
     def action_quit_orchestration(self) -> None:
         """Handle quit action - show confirmation dialog."""
         self.push_screen(QuitConfirmScreen(), self._handle_quit_confirmation)
+
+    # =========================================================================
+    # Message Handlers (PR #4)
+    # These handlers receive messages from OrchestrationController and update
+    # the UI accordingly. This enables the message-driven architecture.
+    # =========================================================================
+
+    def on_orchestration_started(self, message: OrchestrationStarted) -> None:
+        """Handle orchestration started message from controller.
+
+        Updates the HUD to reflect the new orchestration run.
+        Note: The welcome banner is written by start() method directly.
+        """
+        header = self.query_one("#hud-header", HUDHeader)
+        header.phase_info = f"0/{message.total_phases}: Starting..."
+
+    def on_phase_changed(self, message: PhaseChanged) -> None:
+        """Handle phase change message from controller.
+
+        Updates the HUD header with new phase information.
+        """
+        header = self.query_one("#hud-header", HUDHeader)
+        header.phase_info = f"{message.phase_index}/{message.total_phases}: {message.phase_title}"
+
+    def on_state_changed(self, message: StateChanged) -> None:
+        """Handle state change message from controller.
+
+        Updates the HUD status indicator with the new state.
+        """
+        header = self.query_one("#hud-header", HUDHeader)
+        status_text, status_style = STATUS_MAP.get(message.state, ("Unknown", "white"))
+        header.status = status_text
+        header.status_style = status_style
+
+    def on_token_stats_updated(self, message: TokenStatsUpdated) -> None:
+        """Handle token stats update message from controller.
+
+        Updates the HUD with current token usage and cost.
+        """
+        header = self.query_one("#hud-header", HUDHeader)
+        header.total_tokens = message.session_input_tokens
+        header.cost_usd = message.total_cost_usd
+        header.context_pct = message.context_pct
+
+    def on_log_message(self, message: LogMessage) -> None:
+        """Handle log message from controller.
+
+        Writes to the log panel, respecting verbose setting unless raw=True.
+        """
+        if message.raw or self.ui_context.verbose:
+            self.write_log(message.message)
+
+    def on_hud_message_set(self, message: HUDMessageSet) -> None:
+        """Handle HUD message from controller.
+
+        Shows a transient message in the hotkey bar with optional auto-clear.
+        """
+        self.set_hud_message(message.message)
+        if message.clear_after > 0:
+            self.set_timer(message.clear_after, self.clear_hud_message)
+
+    def on_verbose_toggled(self, message: VerboseToggled) -> None:
+        """Handle verbose toggle message from controller.
+
+        Updates the hotkey bar to reflect the new verbose state.
+        """
+        hotkey_bar = self.query_one("#hotkey-bar", HotkeyBar)
+        hotkey_bar.verbose = message.is_verbose
+
+    def on_orchestration_completed(self, message: OrchestrationCompleted) -> None:
+        """Handle orchestration completed message from controller.
+
+        Logs completion status. The TUI continues running to let users review logs.
+        """
+        if message.success:
+            self.write_log(f"[green]Orchestration completed: {message.message}[/green]")
+        else:
+            self.write_log(f"[red]Orchestration failed: {message.message}[/red]")
 
     def _handle_quit_confirmation(self, confirmed: bool | None) -> None:
         """Handle the result of quit confirmation dialog."""
