@@ -340,8 +340,14 @@ class InteractiveUI:
 
     def _keyboard_listener(self) -> None:
         """Background thread for keyboard input handling."""
+        import os
+
+        # Detect Git Bash/MINGW/Cygwin on Windows (they need Unix-style input)
+        is_mingw = os.environ.get("MSYSTEM") is not None
+        is_cygwin = "cygwin" in os.environ.get("TERM", "").lower()
+
         # Platform-specific keyboard handling
-        if sys.platform == "win32":
+        if sys.platform == "win32" and not is_mingw and not is_cygwin:
             self._keyboard_listener_windows()
         else:
             self._keyboard_listener_unix()

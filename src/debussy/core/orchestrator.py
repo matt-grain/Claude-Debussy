@@ -73,6 +73,10 @@ class Orchestrator:
             InteractiveUI() if self.config.interactive else NonInteractiveUI()
         )
 
+        # Connect UI to ClaudeRunner for log output routing
+        if self.config.interactive:
+            self.claude._output_callback = self.ui.log
+
         # Parse master plan
         self.plan: MasterPlan | None = None
 

@@ -6,6 +6,7 @@ import asyncio
 import json
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal, TextIO
 
@@ -26,6 +27,7 @@ class ClaudeRunner:
         model: str = "sonnet",
         output_mode: OutputMode = "terminal",
         log_dir: Path | None = None,
+        output_callback: Callable[[str], None] | None = None,
     ) -> None:
         self.project_root = project_root
         self.timeout = timeout
@@ -35,12 +37,17 @@ class ClaudeRunner:
         self.output_mode = output_mode
         self.log_dir = log_dir or (project_root / ".debussy" / "logs")
         self._current_log_file: TextIO | None = None
+        self._output_callback = output_callback
 
     def _write_output(self, text: str, newline: bool = False) -> None:
-        """Write output to terminal and/or file based on output_mode."""
+        """Write output to terminal/file/callback based on output_mode."""
         output = text + ("\n" if newline else "")
 
-        if self.output_mode in ("terminal", "both"):
+        # Route to UI callback if available (interactive mode)
+        if self._output_callback:
+            self._output_callback(text)
+        elif self.output_mode in ("terminal", "both"):
+            # Only write to stdout if no callback (non-interactive or YOLO mode)
             sys.stdout.write(output)
             sys.stdout.flush()
 
