@@ -19,3 +19,8 @@ wheels/
 tmpclaude-*
 .orchestrator/
 .debussy/
+.pytest_cache
+.ruff_cache
+
+# qi db
+core-index.db
