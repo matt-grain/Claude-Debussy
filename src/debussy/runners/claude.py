@@ -183,12 +183,13 @@ class ClaudeRunner:
         timeout: int = 1800,
         claude_command: str = "claude",
         stream_output: bool = True,
-        model: str = "sonnet",
+        model: str = "haiku",
         output_mode: OutputMode = "terminal",
         log_dir: Path | None = None,
         output_callback: Callable[[str], None] | None = None,
         token_stats_callback: Callable[[TokenStats], None] | None = None,
         agent_change_callback: Callable[[str], None] | None = None,
+        with_ltm: bool = False,
     ) -> None:
         self.project_root = project_root
         self.timeout = timeout
@@ -204,6 +205,7 @@ class ClaudeRunner:
         self._current_agent: str = "Debussy"  # Track current active agent
         self._needs_agent_prefix: bool = True  # Emit prefix on next text output
         self._pending_task_ids: set[str] = set()  # Track active Task tool_use_ids
+        self._with_ltm = with_ltm  # Enable LTM learnings in prompts
 
     def _write_output(self, text: str, newline: bool = False) -> None:
         """Write output to terminal/file/callback based on output_mode."""
@@ -521,7 +523,7 @@ class ClaudeRunner:
         Returns:
             ExecutionResult with success status and session log
         """
-        prompt = custom_prompt or self._build_phase_prompt(phase)
+        prompt = custom_prompt or self._build_phase_prompt(phase, with_ltm=self._with_ltm)
 
         # Reset agent tracking at start of each phase
         self._reset_active_agent("Debussy")
@@ -667,23 +669,54 @@ When complete, write notes to: `{phase.notes_output}`
         # LTM context recall for non-first phases
         ltm_recall = ""
         if with_ltm and phase.notes_input:
-            ltm_recall = """
-## Recall Previous Context
-Run `/recall` to retrieve memories from previous phases before starting.
+            ltm_recall = f"""
+## Recall Previous Learnings
+Run `/recall phase:{phase.id}` to retrieve learnings from previous runs of this phase.
 """
 
-        # LTM memory instructions
-        ltm_remember = ""
+        # LTM learnings section - ADD to Process Wrapper steps
+        ltm_learnings = ""
         if with_ltm:
-            ltm_remember = """
-2. Save key decisions: `/remember "Phase {phase_id}: <what you learned>"`"""
+            ltm_learnings = f"""
+## ADDITIONAL Process Wrapper Step (LTM Enabled)
+**IMPORTANT**: Add this step to the Process Wrapper BEFORE signaling completion:
 
-        completion_steps = f"""
+- [ ] **Output `## Learnings` section in your notes file** with insights from this phase:
+  - Errors encountered and how you fixed them
+  - Project-specific patterns discovered
+  - Gate failures and resolutions
+  - Tips for future runs
+
+- [ ] **Save each learning** using `/remember`:
+  ```
+  /remember --priority MEDIUM --tags phase:{phase.id},agent:Debussy "learning content"
+  ```
+
+This step is MANDATORY when LTM is enabled. Do not skip it.
+"""
+
+        # Build completion steps - vary based on LTM
+        if with_ltm:
+            completion_steps = f"""
 ## Completion
 
 When the phase is complete (all tasks done, all gates passing):
-1. Write notes to the specified output path{ltm_remember}
+1. Write notes to the specified output path (include `## Learnings` section!)
+2. Call `/remember` for each learning you documented
 3. Signal completion: `/debussy-done {phase.id}`
+
+**Do NOT signal completion until you have saved your learnings with /remember.**
+
+Fallback (if slash commands unavailable):
+- `uv run debussy done --phase {phase.id} --status completed`
+"""
+        else:
+            completion_steps = f"""
+## Completion
+
+When the phase is complete (all tasks done, all gates passing):
+1. Write notes to the specified output path
+2. Signal completion: `/debussy-done {phase.id}`
 
 If you encounter a blocker:
 - `/debussy-done {phase.id} blocked "reason for blocker"`
@@ -698,6 +731,7 @@ Read the phase plan file and follow the Process Wrapper EXACTLY.
 {notes_context}{ltm_recall}
 {required_agents}
 {notes_output}
+{ltm_learnings}
 {completion_steps}
 ## Important
 
@@ -738,9 +772,22 @@ Read the phase plan file and follow the Process Wrapper EXACTLY.
         # LTM recall for remediation context
         ltm_section = ""
         if with_ltm:
-            ltm_section = """
-## Recall Previous Attempt
-Run `/recall` to see what was tried before and why it failed.
+            ltm_section = f"""
+## Recall Previous Attempts (LTM Enabled)
+Run `/recall phase:{phase.id}` to see learnings from previous runs of this phase.
+This may include fixes for similar issues encountered before.
+"""
+
+        # LTM learnings for remediation
+        ltm_learnings = ""
+        if with_ltm:
+            ltm_learnings = f"""
+## Save Remediation Learnings
+After fixing the issues, save what you learned:
+```
+/remember --priority HIGH --tags phase:{phase.id},agent:Debussy,remediation "description of fix"
+```
+High priority ensures this learning persists for future remediation attempts.
 """
 
         return f"""REMEDIATION SESSION for Phase {phase.id}: {phase.title}
@@ -755,7 +802,7 @@ The previous attempt FAILED compliance checks.
 
 ## Original Phase Plan
 Read and follow: `{phase.path}`
-
+{ltm_learnings}
 ## When Complete
 Signal completion: `/debussy-done {phase.id}`
 

@@ -489,6 +489,105 @@ class TestClaudeRunnerPrompts:
 
         assert "Complete all required sections" in prompt
 
+    def test_build_phase_prompt_with_ltm(
+        self,
+        claude_runner: ClaudeRunner,
+    ) -> None:
+        """Test prompt includes LTM learnings instructions when enabled."""
+        phase = Phase(
+            id="1",
+            title="Test",
+            path=Path("test.md"),
+            status=PhaseStatus.PENDING,
+        )
+        prompt = claude_runner._build_phase_prompt(phase, with_ltm=True)
+
+        assert "ADDITIONAL Process Wrapper Step (LTM Enabled)" in prompt
+        assert "## Learnings" in prompt
+        assert "/remember" in prompt
+        assert "phase:1" in prompt
+        assert "agent:Debussy" in prompt
+
+    def test_build_phase_prompt_with_ltm_recall(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        """Test prompt includes /recall instruction when LTM enabled and notes_input exists."""
+        # Create a notes input file
+        notes_file = temp_dir / "NOTES_phase_0.md"
+        notes_file.write_text("Previous notes")
+
+        phase = Phase(
+            id="1",
+            title="Test",
+            path=Path("test.md"),
+            status=PhaseStatus.PENDING,
+            notes_input=notes_file,
+        )
+        runner = ClaudeRunner(temp_dir)
+        prompt = runner._build_phase_prompt(phase, with_ltm=True)
+
+        assert "Recall Previous Learnings" in prompt
+        assert "/recall phase:1" in prompt
+
+    def test_build_phase_prompt_without_ltm(
+        self,
+        claude_runner: ClaudeRunner,
+    ) -> None:
+        """Test prompt does NOT include LTM instructions when disabled."""
+        phase = Phase(
+            id="1",
+            title="Test",
+            path=Path("test.md"),
+            status=PhaseStatus.PENDING,
+        )
+        prompt = claude_runner._build_phase_prompt(phase, with_ltm=False)
+
+        assert "ADDITIONAL Process Wrapper Step (LTM Enabled)" not in prompt
+        assert "/remember" not in prompt
+
+    def test_build_remediation_prompt_with_ltm(
+        self,
+        claude_runner: ClaudeRunner,
+        phase_for_prompt: Phase,
+    ) -> None:
+        """Test remediation prompt includes LTM recall and save instructions."""
+        issues = [
+            ComplianceIssue(
+                type=ComplianceIssueType.GATES_FAILED,
+                severity="critical",
+                details="Gate 'ruff' failed",
+            ),
+        ]
+
+        prompt = claude_runner.build_remediation_prompt(phase_for_prompt, issues, with_ltm=True)
+
+        assert "Recall Previous Attempts" in prompt
+        assert "/recall phase:1" in prompt
+        assert "Save Remediation Learnings" in prompt
+        assert "/remember" in prompt
+        assert "priority HIGH" in prompt
+        assert "remediation" in prompt
+
+    def test_build_remediation_prompt_without_ltm(
+        self,
+        claude_runner: ClaudeRunner,
+        phase_for_prompt: Phase,
+    ) -> None:
+        """Test remediation prompt does NOT include LTM when disabled."""
+        issues = [
+            ComplianceIssue(
+                type=ComplianceIssueType.GATES_FAILED,
+                severity="critical",
+                details="Gate 'ruff' failed",
+            ),
+        ]
+
+        prompt = claude_runner.build_remediation_prompt(phase_for_prompt, issues, with_ltm=False)
+
+        assert "Recall Previous Attempts" not in prompt
+        assert "Save Remediation Learnings" not in prompt
+
 
 class TestClaudeRunnerOutput:
     """Tests for ClaudeRunner output handling."""

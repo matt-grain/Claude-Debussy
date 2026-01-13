@@ -176,7 +176,7 @@ def run(
     model: Annotated[
         str,
         typer.Option("--model", "-m", help="Claude model: haiku, sonnet, opus"),
-    ] = "sonnet",
+    ] = "haiku",
     output: Annotated[
         str,
         typer.Option("--output", "-o", help="Output mode: terminal, file, both"),
@@ -187,6 +187,14 @@ def run(
             "--no-interactive",
             "--yolo",
             help="YOLO mode: disable interactive dashboard (for CI/automation)",
+        ),
+    ] = False,
+    learnings: Annotated[
+        bool,
+        typer.Option(
+            "--learnings",
+            "-L",
+            help="Enable LTM learnings: workers save insights via /remember and recall via /recall",
         ),
     ] = False,
 ) -> None:
@@ -200,11 +208,18 @@ def run(
         console.print("[red]Cannot use --resume and --restart together[/red]")
         raise typer.Exit(1)
 
-    # Create config with overrides
+    # Load config from file, then apply CLI overrides
     from debussy.config import Config
 
     interactive = not no_interactive
-    config = Config(model=model, output=output, interactive=interactive)  # type: ignore[arg-type]
+    config = Config.load()  # Load from .debussy/config.yaml if exists
+    # Apply CLI overrides (only model, output, interactive are typically overridden)
+    config.model = model  # type: ignore[assignment]
+    config.output = output  # type: ignore[assignment]
+    config.interactive = interactive
+    # Only override learnings if explicitly set via CLI flag
+    if learnings:
+        config.learnings = learnings
 
     # Parse plan and display banner (skip for TUI - it has its own header)
     plan = parse_master_plan(master_plan)
@@ -680,6 +695,17 @@ def init(
             _write_ltm_command_inline,
             prefix="LTM ",
         )
+
+    # Create config with learnings enabled if --with-ltm
+    if with_ltm:
+        from debussy.config import Config
+
+        debussy_dir = target / ".debussy"
+        debussy_dir.mkdir(exist_ok=True)
+        config = Config(learnings=True)
+        config_path = debussy_dir / "config.yaml"
+        config.save(config_path)
+        console.print(f"[green]Created {config_path} with learnings enabled[/green]")
 
     console.print("\n[bold]Setup complete![/bold]")
     if with_ltm:

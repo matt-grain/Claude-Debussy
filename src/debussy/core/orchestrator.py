@@ -19,6 +19,7 @@ from debussy.core.state import StateManager
 from debussy.notifications.base import ConsoleNotifier, Notifier, NullNotifier
 from debussy.notifications.desktop import CompositeNotifier, DesktopNotifier
 from debussy.notifications.ntfy import NtfyNotifier
+from debussy.parsers.learnings import extract_learnings
 from debussy.parsers.master import parse_master_plan
 from debussy.parsers.phase import parse_phase
 from debussy.runners.claude import ClaudeRunner, TokenStats
@@ -53,9 +54,12 @@ class Orchestrator:
             self.config.timeout,
             model=self.config.model,
             output_mode=self.config.output,
+            with_ltm=self.config.learnings,
         )
         self.gates = GateRunner(self.project_root)
-        self.checker = ComplianceChecker(self.gates, self.project_root)
+        self.checker = ComplianceChecker(
+            self.gates, self.project_root, ltm_enabled=self.config.learnings
+        )
 
         # Initialize notifier based on config
         if notifier is None:
@@ -333,7 +337,9 @@ class Orchestrator:
 
             # Build prompt (normal or remediation)
             if is_remediation:
-                prompt = self.claude.build_remediation_prompt(phase, previous_issues)
+                prompt = self.claude.build_remediation_prompt(
+                    phase, previous_issues, with_ltm=self.config.learnings
+                )
             else:
                 prompt = None  # Use default prompt
 
@@ -364,7 +370,6 @@ class Orchestrator:
                 result.session_log,
                 report,
             )
-
             # Record gate results
             exec_id = self.state.get_attempt_count(run_id, phase.id)
             for gate_result in compliance.gate_results:
@@ -379,6 +384,9 @@ class Orchestrator:
                     f"Phase {phase.id} Completed",
                     "All compliance checks passed",
                 )
+                # Save learnings to LTM if enabled
+                if self.config.learnings:
+                    self._save_learnings_to_ltm(phase)
                 return True
 
             # Handle non-compliance
@@ -393,6 +401,9 @@ class Orchestrator:
                     )
                     self.state.update_phase_status(run_id, phase.id, PhaseStatus.COMPLETED)
                     phase.status = PhaseStatus.COMPLETED  # Update in-memory status
+                    # Save learnings to LTM if enabled (even with warnings)
+                    if self.config.learnings:
+                        self._save_learnings_to_ltm(phase)
                     return True
 
                 case RemediationStrategy.TARGETED_FIX | RemediationStrategy.FULL_RETRY:
@@ -431,6 +442,39 @@ class Orchestrator:
             f"Max attempts ({max_attempts}) reached",
         )
         return False
+
+    def _save_learnings_to_ltm(self, phase: Phase) -> None:
+        """Extract learnings from phase notes and save to LTM."""
+        if not phase.notes_output or not phase.notes_output.exists():
+            return
+
+        learnings = extract_learnings(phase.notes_output, phase.id)
+        if not learnings:
+            return
+
+        import contextlib
+        import subprocess
+
+        for learning in learnings:
+            with contextlib.suppress(subprocess.TimeoutExpired, FileNotFoundError):
+                subprocess.run(
+                    [
+                        "uv",
+                        "run",
+                        "ltm",
+                        "remember",
+                        "--kind",
+                        "learnings",
+                        "--impact",
+                        "medium",
+                        f"[Phase {phase.id}] {learning.content}",
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    cwd=self.project_root,
+                    timeout=10,
+                )
 
     def _dependencies_met(self, phase: Phase) -> bool:
         """Check if all dependencies are met for a phase."""

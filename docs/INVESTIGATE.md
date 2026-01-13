@@ -126,7 +126,7 @@ When an incomplete run is detected in interactive mode, a modal dialog appears:
 
 ## 3. Memory for Orchestrated Agents
 
-**Status:** Design needed
+**Status:** ✅ IMPLEMENTED (2026-01-13)
 
 **Problem:** The Claude sessions spawned by Debussy are ephemeral - they have no memory of:
 - Previous runs of the same phase
@@ -188,22 +188,29 @@ This means the same errors can repeat across runs, and learnings are lost.
 └─────────────────────────────────────────────────────┘
 ```
 
-### Implementation Plan
+### Implementation (Option C - Hybrid with LTM)
 
-#### Phase 1: Structured learning reports from workers
-- [ ] Add `## Learnings` section to phase completion output
-- [ ] Parse learnings from worker output after phase completes
-- [ ] Store learnings in a `learnings` table in state.db
+The implementation uses Claude-LTM directly via `/remember` and `/recall` commands - no duplicate storage needed!
 
-#### Phase 2: Inject learnings into future sessions
-- [ ] When starting a phase, query previous learnings for that phase
-- [ ] Inject relevant learnings into the phase prompt
-- [ ] Format: "Previous learnings for this phase: ..."
+**New CLI flag:**
+```bash
+debussy run plan.md --learnings    # Enable LTM learnings
+debussy run plan.md -L             # Short form
+```
 
-#### Phase 3: LTM integration (optional)
-- [ ] Add `--remember` flag to save learnings to LTM
-- [ ] Create Debussy-specific memory kinds (PHASE_LEARNING, GATE_FIX, etc.)
-- [ ] Use LTM API to store/retrieve across projects
+**Prompt changes:**
+- Phase prompts include instructions to output `## Learnings` section
+- Workers call `/remember` with phase/agent tags: `--tags phase:1,agent:Explore`
+- Prompts include `/recall phase:<id>` for retrieving previous learnings
+- Remediation prompts recall and save with `--priority HIGH`
+
+**Files modified:**
+- [src/debussy/config.py](../src/debussy/config.py) - Added `learnings: bool` field
+- [src/debussy/cli.py](../src/debussy/cli.py) - Added `--learnings/-L` flag
+- [src/debussy/runners/claude.py](../src/debussy/runners/claude.py) - Updated `_build_phase_prompt()` and `build_remediation_prompt()` with LTM instructions
+- [src/debussy/core/orchestrator.py](../src/debussy/core/orchestrator.py) - Pass `with_ltm` to ClaudeRunner
+
+**Tests:** 5 new tests in `tests/test_runners.py` (TestClaudeRunnerPrompts class)
 
 ### Example: Learning Injection
 
@@ -221,7 +228,7 @@ This means the same errors can repeat across runs, and learnings are lost.
 
 1. ~~**Resume & Skip**~~ - ✅ DONE
 2. **Subagent Logs** - Better visibility, helps debugging
-3. **Memory System** - Longer-term improvement, requires design decisions
+3. ~~**Memory System**~~ - ✅ DONE (via LTM integration)
 
 ---
 

@@ -26,13 +26,22 @@ REQUIRED_NOTES_SECTIONS = [
     "## Files Modified",
 ]
 
+# Section required when LTM learnings is enabled
+LTM_LEARNINGS_SECTION = "## Learnings"
+
 
 class ComplianceChecker:
     """Verifies that phase executions comply with template requirements."""
 
-    def __init__(self, gate_runner: GateRunner, project_root: Path | None = None) -> None:
+    def __init__(
+        self,
+        gate_runner: GateRunner,
+        project_root: Path | None = None,
+        ltm_enabled: bool = False,
+    ) -> None:
         self.gate_runner = gate_runner
         self.project_root = project_root or Path.cwd()
+        self.ltm_enabled = ltm_enabled
 
     async def verify_completion(
         self,
@@ -153,6 +162,17 @@ class ComplianceChecker:
                 )
             )
 
+        # Check for ## Learnings section when LTM is enabled
+        # High severity triggers TARGETED_FIX remediation to ask worker for learnings
+        if self.ltm_enabled and LTM_LEARNINGS_SECTION not in content:
+            issues.append(
+                ComplianceIssue(
+                    type=ComplianceIssueType.NOTES_INCOMPLETE,
+                    severity="high",
+                    details=f"Missing {LTM_LEARNINGS_SECTION} section (LTM enabled)",
+                )
+            )
+
         return issues
 
     def _check_agent_invocations(
@@ -250,7 +270,7 @@ class ComplianceChecker:
 
         if critical_count >= 2:
             return RemediationStrategy.FULL_RETRY
-        elif critical_count == 1 or high_count >= 2:
+        elif critical_count == 1 or high_count >= 1:
             return RemediationStrategy.TARGETED_FIX
         else:
             return RemediationStrategy.WARN_AND_ACCEPT

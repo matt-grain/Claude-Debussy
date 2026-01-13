@@ -23,13 +23,17 @@ class Config(BaseModel):
 
     timeout: int = Field(default=1800, description="Phase timeout in seconds (default: 30 min)")
     max_retries: int = Field(default=2, description="Max retry attempts per phase")
-    model: str = Field(default="sonnet", description="Claude model to use (haiku, sonnet, opus)")
+    model: str = Field(default="haiku", description="Claude model to use (haiku, sonnet, opus)")
     output: Literal["terminal", "file", "both"] = Field(
         default="terminal", description="Output mode: terminal, file, or both"
     )
     interactive: bool = Field(default=True, description="Interactive mode with dashboard UI")
     notifications: NotificationConfig = Field(default_factory=NotificationConfig)
     strict_compliance: bool = Field(default=True, description="Fail on any compliance issue")
+    learnings: bool = Field(
+        default=False,
+        description="Enable LTM learnings - workers save insights via /remember",
+    )
 
     @classmethod
     def load(cls, config_path: Path | None = None) -> Config:
