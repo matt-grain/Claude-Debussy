@@ -23,12 +23,7 @@ from debussy.parsers.master import parse_master_plan
 from debussy.parsers.phase import parse_phase
 from debussy.runners.claude import ClaudeRunner
 from debussy.runners.gates import GateRunner
-from debussy.ui.interactive import (
-    InteractiveUI,
-    NonInteractiveUI,
-    UIState,
-    UserAction,
-)
+from debussy.ui import NonInteractiveUI, TextualUI, UIState, UserAction
 
 if TYPE_CHECKING:
     from debussy.core.models import ComplianceIssue
@@ -69,8 +64,8 @@ class Orchestrator:
             self.notifier = notifier
 
         # Initialize UI based on config
-        self.ui: InteractiveUI | NonInteractiveUI = (
-            InteractiveUI() if self.config.interactive else NonInteractiveUI()
+        self.ui: TextualUI | NonInteractiveUI = (
+            TextualUI() if self.config.interactive else NonInteractiveUI()
         )
 
         # Connect UI to ClaudeRunner for log output routing
@@ -181,7 +176,8 @@ class Orchestrator:
                         f"Phase {phase.id} Skipped",
                         "Dependencies not met",
                     )
-                    self.ui.log(f"[dim]Phase {phase.id} skipped: dependencies not met[/dim]")
+                    msg = f"[dim]Phase {phase.id} skipped: dependencies not met[/dim]"
+                    self.ui.log_message(msg)
                     continue
 
                 # Update UI for new phase

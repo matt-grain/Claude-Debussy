@@ -272,6 +272,12 @@ class ClaudeRunner:
                     duration_seconds=time.time() - start_time,
                     pid=process.pid,
                 )
+            except asyncio.CancelledError:
+                # User cancelled (e.g., quit from TUI) - kill subprocess and re-raise
+                process.kill()
+                await process.wait()
+                self._close_log_file()
+                raise
 
             # Use raw JSON output for session log (compliance checker can parse it)
             session_log = "".join(raw_output)

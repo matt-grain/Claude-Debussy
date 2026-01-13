@@ -139,29 +139,77 @@ def run(
     interactive = not no_interactive
     config = Config(model=model, output=output, interactive=interactive)  # type: ignore[arg-type]
 
-    # Parse plan and display banner
+    # Parse plan and display banner (skip for TUI - it has its own header)
     plan = parse_master_plan(master_plan)
-    _display_banner(
-        plan_name=plan.name,
-        phases=plan.phases,
-        model=model,
-        output=output,
-        max_retries=config.max_retries,
-        timeout=config.timeout,
-        interactive=interactive,
-    )
+    if not interactive:
+        _display_banner(
+            plan_name=plan.name,
+            phases=plan.phases,
+            model=model,
+            output=output,
+            max_retries=config.max_retries,
+            timeout=config.timeout,
+            interactive=interactive,
+        )
 
-    if phase:
-        console.print(f"[yellow]Starting from phase: {phase}[/yellow]\n")
+        if phase:
+            console.print(f"[yellow]Starting from phase: {phase}[/yellow]\n")
 
     try:
-        run_id = run_orchestration(master_plan, start_phase=phase, config=config)
-        console.print(f"\n[bold green]Orchestration completed. Run ID: {run_id}[/bold green]")
-        if output in ("file", "both"):
-            console.print("[dim]Logs saved to: .debussy/logs/[/dim]")
+        if interactive:
+            # Use Textual TUI as the main driver
+            _run_with_tui(master_plan, start_phase=phase, config=config)
+        else:
+            # Non-interactive (YOLO) mode
+            run_id = run_orchestration(master_plan, start_phase=phase, config=config)
+            console.print(f"\nOrchestration completed. Run ID: {run_id}")
+            if output in ("file", "both"):
+                console.print("[dim]Logs saved to: .debussy/logs/[/dim]")
     except Exception as e:
         console.print(f"\n[bold red]Orchestration failed: {e}[/bold red]")
         raise typer.Exit(1) from e
+
+
+def _run_with_tui(
+    master_plan_path: Path,
+    start_phase: str | None = None,
+    config: object = None,
+) -> None:
+    """Run orchestration with Textual TUI.
+
+    The TUI is the main driver and runs orchestration as a worker task.
+    """
+    from debussy.config import Config
+    from debussy.core.orchestrator import Orchestrator
+    from debussy.ui.tui import DebussyTUI
+
+    if config is None:
+        config = Config.load()
+
+    # Create orchestrator (but don't run yet)
+    orchestrator = Orchestrator(
+        master_plan_path,
+        config=config,  # type: ignore[arg-type]
+        project_root=Path.cwd(),
+    )
+
+    # Create the TUI app
+    tui = DebussyTUI()
+
+    # Define the orchestration coroutine that will run as a worker
+    async def run_orchestration_task() -> str:
+        """Run orchestration and return run_id."""
+        # Wire up the TUI as the UI for the orchestrator
+        # Use type: ignore since DebussyTUI implements the same interface
+        orchestrator.ui = tui  # type: ignore[assignment]
+        if orchestrator.config.interactive:
+            orchestrator.claude._output_callback = tui.log_message
+
+        return await orchestrator.run(start_phase=start_phase)
+
+    # Pass the coroutine factory to the TUI and run
+    tui._orchestration_coro = run_orchestration_task
+    tui.run()
 
 
 @app.command()
