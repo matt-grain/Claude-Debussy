@@ -520,3 +520,325 @@ class TestStatus:
         assert "Delete all files?" in msg.message
         assert "auto-confirmed" in msg.message
         assert msg.raw is True
+
+
+# =============================================================================
+# PR #3: Controller Integration Tests
+# =============================================================================
+
+
+class TestControllerIntegration:
+    """Test controller integration with DebussyTUI (PR #3).
+
+    These tests verify the dual-mode bridge pattern where TUI methods
+    delegate to the controller when one is set.
+    """
+
+    @pytest.fixture
+    def mock_app(self) -> MagicMock:
+        """Create a mock Textual app."""
+        app = MagicMock()
+        app.posted_messages = []
+        app.post_message = lambda msg: app.posted_messages.append(msg)
+        return app
+
+    @pytest.fixture
+    def controller(self, mock_app: MagicMock) -> OrchestrationController:
+        """Create a controller with mock app."""
+        return OrchestrationController(mock_app)
+
+    def test_set_controller_syncs_context(self) -> None:
+        """set_controller() should sync ui_context to controller's context."""
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        controller = OrchestrationController(app)
+
+        app.set_controller(controller)
+
+        # Both should reference the same context object
+        assert app.ui_context is controller.context
+
+    def test_textual_ui_creates_controller(self) -> None:
+        """TextualUI.create_app() should create and inject controller."""
+        from debussy.ui.tui import TextualUI
+
+        ui = TextualUI()
+        app = ui.create_app()
+
+        assert ui._controller is not None
+        assert app._controller is ui._controller
+
+    def test_textual_ui_context_from_controller(self) -> None:
+        """TextualUI.context should return controller's context."""
+        from debussy.ui.tui import TextualUI
+
+        ui = TextualUI()
+        ui.create_app()
+
+        # Should return controller's context
+        assert ui.context is ui._controller.context
+
+    def test_start_delegates_to_controller(self) -> None:
+        """start() should delegate to controller when set."""
+        from unittest.mock import patch
+
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        mock_controller = MagicMock()
+        mock_controller.context = MagicMock()
+        app.set_controller(mock_controller)
+
+        # Mock update_hud and write_log to avoid Textual widget queries
+        with patch.object(app, "update_hud"), patch.object(app, "write_log"):
+            app.start("test-plan", 5)
+
+        mock_controller.start.assert_called_once_with("test-plan", 5)
+
+    def test_set_phase_delegates_to_controller(self) -> None:
+        """set_phase() should delegate to controller when set."""
+        from unittest.mock import patch
+
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        mock_controller = MagicMock()
+        mock_controller.context = MagicMock()
+        app.set_controller(mock_controller)
+
+        mock_phase = Mock()
+        mock_phase.id = "p1"
+        mock_phase.title = "Test"
+
+        with patch.object(app, "update_hud"):
+            app.set_phase(mock_phase, 1)
+
+        mock_controller.set_phase.assert_called_once_with(mock_phase, 1)
+
+    def test_set_state_delegates_to_controller(self) -> None:
+        """set_state() should delegate to controller when set."""
+        from unittest.mock import patch
+
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        mock_controller = MagicMock()
+        mock_controller.context = MagicMock()
+        app.set_controller(mock_controller)
+
+        with patch.object(app, "update_hud"):
+            app.set_state(UIState.PAUSED)
+
+        mock_controller.set_state.assert_called_once_with(UIState.PAUSED)
+
+    def test_get_pending_action_delegates_to_controller(self) -> None:
+        """get_pending_action() should delegate to controller when set."""
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        mock_controller = MagicMock()
+        mock_controller.context = MagicMock()
+        mock_controller.get_pending_action.return_value = UserAction.PAUSE
+        app.set_controller(mock_controller)
+
+        result = app.get_pending_action()
+
+        assert result == UserAction.PAUSE
+        mock_controller.get_pending_action.assert_called_once()
+
+    def test_toggle_verbose_delegates_to_controller(self) -> None:
+        """toggle_verbose() should delegate to controller when set."""
+        from unittest.mock import patch
+
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        mock_controller = MagicMock()
+        mock_controller.context = MagicMock()
+        mock_controller.toggle_verbose.return_value = False
+        app.set_controller(mock_controller)
+
+        with patch.object(app, "update_hud"):
+            result = app.toggle_verbose()
+
+        assert result is False
+        mock_controller.toggle_verbose.assert_called_once()
+
+    def test_update_token_stats_delegates_to_controller(self) -> None:
+        """update_token_stats() should delegate to controller when set."""
+        from unittest.mock import patch
+
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        mock_controller = MagicMock()
+        mock_controller.context = MagicMock()
+        app.set_controller(mock_controller)
+
+        with patch.object(app, "update_hud"):
+            app.update_token_stats(100, 50, 0.05, 150, 200_000)
+
+        mock_controller.update_token_stats.assert_called_once_with(100, 50, 0.05, 150, 200_000)
+
+
+class TestControllerIntegrationActions:
+    """Test action handler delegation to controller (PR #3)."""
+
+    def test_action_toggle_pause_delegates_pause(self) -> None:
+        """action_toggle_pause() should queue PAUSE via controller when running."""
+        from unittest.mock import patch
+
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        mock_controller = MagicMock()
+        mock_controller.context = MagicMock()
+        mock_controller.context.state = UIState.RUNNING
+        app.set_controller(mock_controller)
+
+        with patch.object(app, "set_timer"):
+            app.action_toggle_pause()
+
+        mock_controller.queue_action.assert_called_once_with(UserAction.PAUSE)
+
+    def test_action_toggle_pause_delegates_resume(self) -> None:
+        """action_toggle_pause() should queue RESUME via controller when paused."""
+        from unittest.mock import patch
+
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        mock_controller = MagicMock()
+        mock_controller.context = MagicMock()
+        mock_controller.context.state = UIState.PAUSED
+        app.set_controller(mock_controller)
+
+        with patch.object(app, "set_timer"):
+            app.action_toggle_pause()
+
+        mock_controller.queue_action.assert_called_once_with(UserAction.RESUME)
+
+    def test_action_toggle_verbose_delegates(self) -> None:
+        """action_toggle_verbose() should call controller.toggle_verbose()."""
+        from unittest.mock import patch
+
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        mock_controller = MagicMock()
+        mock_controller.context = MagicMock()
+        app.set_controller(mock_controller)
+
+        with patch.object(app, "set_timer"):
+            app.action_toggle_verbose()
+
+        mock_controller.toggle_verbose.assert_called_once()
+
+    def test_action_skip_phase_delegates(self) -> None:
+        """action_skip_phase() should queue SKIP via controller."""
+        from unittest.mock import patch
+
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        mock_controller = MagicMock()
+        mock_controller.context = MagicMock()
+        app.set_controller(mock_controller)
+
+        with patch.object(app, "set_timer"):
+            app.action_skip_phase()
+
+        mock_controller.queue_action.assert_called_once_with(UserAction.SKIP)
+
+
+class TestBackwardCompatibility:
+    """Test backward compatibility when controller is not set (PR #3)."""
+
+    def test_start_without_controller(self) -> None:
+        """start() should work without controller (old path)."""
+        from unittest.mock import patch
+
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        # No controller set
+
+        with patch.object(app, "update_hud"), patch.object(app, "write_log"):
+            app.start("test-plan", 3)
+
+        assert app.ui_context.plan_name == "test-plan"
+        assert app.ui_context.total_phases == 3
+        assert app.ui_context.state == UIState.RUNNING
+
+    def test_set_phase_without_controller(self) -> None:
+        """set_phase() should work without controller (old path)."""
+        from unittest.mock import patch
+
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        mock_phase = Mock()
+        mock_phase.id = "p1"
+        mock_phase.title = "Setup"
+
+        with patch.object(app, "update_hud"):
+            app.set_phase(mock_phase, 1)
+
+        assert app.ui_context.current_phase == "p1"
+        assert app.ui_context.phase_title == "Setup"
+        assert app.ui_context.phase_index == 1
+
+    def test_set_state_without_controller(self) -> None:
+        """set_state() should work without controller (old path)."""
+        from unittest.mock import patch
+
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+
+        with patch.object(app, "update_hud"):
+            app.set_state(UIState.PAUSED)
+
+        assert app.ui_context.state == UIState.PAUSED
+
+    def test_get_pending_action_without_controller(self) -> None:
+        """get_pending_action() should work without controller (old path)."""
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        app._action_queue.append(UserAction.SKIP)
+
+        result = app.get_pending_action()
+
+        assert result == UserAction.SKIP
+
+    def test_toggle_verbose_without_controller(self) -> None:
+        """toggle_verbose() should work without controller (old path)."""
+        from unittest.mock import patch
+
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+        assert app.ui_context.verbose is True
+
+        with patch.object(app, "update_hud"), patch.object(app, "write_log"):
+            result = app.toggle_verbose()
+
+        assert result is False
+        assert app.ui_context.verbose is False
+
+    def test_update_token_stats_without_controller(self) -> None:
+        """update_token_stats() should work without controller (old path)."""
+        from unittest.mock import patch
+
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+
+        with patch.object(app, "update_hud"):
+            app.update_token_stats(100, 50, 0.05, 150, 200_000)
+
+        assert app.ui_context.session_input_tokens == 100
+        assert app.ui_context.session_output_tokens == 50
+        assert app.ui_context.total_cost_usd == 0.05

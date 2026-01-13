@@ -30,6 +30,7 @@ from textual.worker import Worker, WorkerState
 
 from debussy.runners.claude import pid_registry
 from debussy.ui.base import STATUS_MAP, UIContext, UIState, UserAction, format_duration
+from debussy.ui.controller import OrchestrationController
 
 logger = logging.getLogger(__name__)
 
@@ -262,12 +263,28 @@ class DebussyTUI(App):
         """
         super().__init__(**kwargs)
         self.ui_context = UIContext()
+        self._controller: OrchestrationController | None = None  # Optional controller
         self._action_queue: deque[UserAction] = deque()
         self._orchestration_coro = orchestration_coro
         self._worker: Worker[str] | None = None  # Properly typed
         self._run_id: str | None = None
         self._shutting_down: bool = False  # Prevent re-entrance during shutdown
         self._auto_scroll: bool = False  # Log panel auto-scroll state
+
+    def set_controller(self, controller: OrchestrationController) -> None:
+        """Inject the controller (set by TextualUI wrapper).
+
+        When a controller is set, UI methods delegate to it for state management.
+        This enables the message-based architecture while maintaining backward
+        compatibility with direct method calls.
+
+        Args:
+            controller: The orchestration controller instance
+        """
+        self._controller = controller
+        # Sync controller's context to ui_context for backward compatibility
+        # during transition period
+        self.ui_context = controller.context
 
     def compose(self) -> ComposeResult:
         """Compose the app layout."""
@@ -417,21 +434,31 @@ class DebussyTUI(App):
 
     def action_toggle_pause(self) -> None:
         """Handle pause/resume action."""
-        if self.ui_context.state == UIState.RUNNING:
-            self._action_queue.append(UserAction.PAUSE)
-            self.set_hud_message("Pause requested (after current operation)")
+        state = self.ui_context.state
+        action = UserAction.PAUSE if state == UIState.RUNNING else UserAction.RESUME
+        if self._controller:
+            # New path: delegate to controller (emits HUDMessageSet)
+            self._controller.queue_action(action)
         else:
-            self._action_queue.append(UserAction.RESUME)
-            self.set_hud_message("Resume requested")
+            # Old path: direct queue manipulation (deprecated)
+            self._action_queue.append(action)
+            if action == UserAction.PAUSE:
+                self.set_hud_message("Pause requested (after current operation)")
+            else:
+                self.set_hud_message("Resume requested")
         self.set_timer(3.0, self.clear_hud_message)
 
     def action_toggle_verbose(self) -> None:
         """Handle verbose toggle - apply immediately in TUI."""
-        # Toggle immediately so it takes effect right away
-        self.ui_context.verbose = not self.ui_context.verbose
-        self.update_hud()
-        state_str = "ON" if self.ui_context.verbose else "OFF"
-        self.set_hud_message(f"Verbose: {state_str}")
+        if self._controller:
+            # New path: delegate to controller (emits VerboseToggled + HUDMessageSet)
+            self._controller.toggle_verbose()
+        else:
+            # Old path: direct update (deprecated)
+            self.ui_context.verbose = not self.ui_context.verbose
+            self.update_hud()
+            state_str = "ON" if self.ui_context.verbose else "OFF"
+            self.set_hud_message(f"Verbose: {state_str}")
         self.set_timer(3.0, self.clear_hud_message)
 
     def action_toggle_autoscroll(self) -> None:
@@ -448,8 +475,13 @@ class DebussyTUI(App):
 
     def action_skip_phase(self) -> None:
         """Handle skip action."""
-        self._action_queue.append(UserAction.SKIP)
-        self.set_hud_message("Skip requested (after current operation)")
+        if self._controller:
+            # New path: delegate to controller (emits HUDMessageSet)
+            self._controller.queue_action(UserAction.SKIP)
+        else:
+            # Old path: direct queue manipulation (deprecated)
+            self._action_queue.append(UserAction.SKIP)
+            self.set_hud_message("Skip requested (after current operation)")
         self.set_timer(3.0, self.clear_hud_message)
 
     def action_quit_orchestration(self) -> None:
@@ -469,7 +501,10 @@ class DebussyTUI(App):
         self._shutting_down = True
 
         # User confirmed quit
-        self._action_queue.append(UserAction.QUIT)
+        if self._controller:
+            self._controller.queue_action(UserAction.QUIT)
+        else:
+            self._action_queue.append(UserAction.QUIT)
         self.write_log("")
         self.write_log("[yellow]Shutting down...[/yellow]")
 
@@ -520,10 +555,15 @@ class DebussyTUI(App):
         Note: Called from async worker context (same event loop as Textual),
         so direct method calls are safe - no call_later() needed.
         """
-        self.ui_context.plan_name = plan_name
-        self.ui_context.total_phases = total_phases
-        self.ui_context.start_time = time.time()
-        self.ui_context.state = UIState.RUNNING
+        if self._controller:
+            # New path: delegate to controller (emits OrchestrationStarted message)
+            self._controller.start(plan_name, total_phases)
+        else:
+            # Old path: direct update (deprecated)
+            self.ui_context.plan_name = plan_name
+            self.ui_context.total_phases = total_phases
+            self.ui_context.start_time = time.time()
+            self.ui_context.state = UIState.RUNNING
         self.update_hud()
         self._write_welcome_banner(plan_name, total_phases)
 
@@ -548,15 +588,25 @@ class DebussyTUI(App):
 
     def set_phase(self, phase: Phase, index: int) -> None:
         """Update the current phase being executed."""
-        self.ui_context.current_phase = phase.id
-        self.ui_context.phase_title = phase.title
-        self.ui_context.phase_index = index
-        self.ui_context.start_time = time.time()
+        if self._controller:
+            # New path: delegate to controller (emits PhaseChanged message)
+            self._controller.set_phase(phase, index)
+        else:
+            # Old path: direct update (deprecated)
+            self.ui_context.current_phase = phase.id
+            self.ui_context.phase_title = phase.title
+            self.ui_context.phase_index = index
+            self.ui_context.start_time = time.time()
         self.update_hud()
 
     def set_state(self, state: UIState) -> None:
         """Update the UI state."""
-        self.ui_context.state = state
+        if self._controller:
+            # New path: delegate to controller (emits StateChanged message)
+            self._controller.set_state(state)
+        else:
+            # Old path: direct update (deprecated)
+            self.ui_context.state = state
         self.update_hud()
 
     def log_message(self, message: str) -> None:
@@ -574,6 +624,10 @@ class DebussyTUI(App):
 
     def get_pending_action(self) -> UserAction:
         """Get the next pending user action."""
+        if self._controller:
+            # New path: delegate to controller
+            return self._controller.get_pending_action()
+        # Old path: direct queue access (deprecated)
         if self._action_queue:
             action = self._action_queue.popleft()
             self.ui_context.last_action = action
@@ -582,6 +636,12 @@ class DebussyTUI(App):
 
     def toggle_verbose(self) -> bool:
         """Toggle verbose logging."""
+        if self._controller:
+            # New path: delegate to controller (emits VerboseToggled message)
+            result = self._controller.toggle_verbose()
+            self.update_hud()
+            return result
+        # Old path: direct update (deprecated)
         self.ui_context.verbose = not self.ui_context.verbose
         self.update_hud()
         state_str = "ON" if self.ui_context.verbose else "OFF"
@@ -601,17 +661,24 @@ class DebussyTUI(App):
         Per-turn updates show cumulative stats within current session.
         Final result (with cost > 0) adds session totals to run totals.
         """
-        # Update current session stats (Claude sends cumulative per-session)
-        self.ui_context.session_input_tokens = input_tokens
-        self.ui_context.session_output_tokens = output_tokens
-        self.ui_context.current_context_tokens = context_tokens
-        self.ui_context.context_window = context_window
+        if self._controller:
+            # New path: delegate to controller (emits TokenStatsUpdated message)
+            self._controller.update_token_stats(
+                input_tokens, output_tokens, cost_usd, context_tokens, context_window
+            )
+        else:
+            # Old path: direct update (deprecated)
+            # Update current session stats (Claude sends cumulative per-session)
+            self.ui_context.session_input_tokens = input_tokens
+            self.ui_context.session_output_tokens = output_tokens
+            self.ui_context.current_context_tokens = context_tokens
+            self.ui_context.context_window = context_window
 
-        # Final result has cost - add session totals to run totals
-        if cost_usd > 0:
-            self.ui_context.total_input_tokens += input_tokens
-            self.ui_context.total_output_tokens += output_tokens
-            self.ui_context.total_cost_usd += cost_usd
+            # Final result has cost - add session totals to run totals
+            if cost_usd > 0:
+                self.ui_context.total_input_tokens += input_tokens
+                self.ui_context.total_output_tokens += output_tokens
+                self.ui_context.total_cost_usd += cost_usd
 
         self.update_hud()
 
@@ -632,17 +699,26 @@ class DebussyTUI(App):
 class TextualUI:
     """Wrapper that provides the UI interface backed by DebussyTUI.
 
-    This class creates and manages a DebussyTUI app instance.
+    This class creates and manages a DebussyTUI app instance with an
+    OrchestrationController for state management.
+
     The app must be run from the main thread using run_with_orchestration().
     """
 
     def __init__(self) -> None:
         """Initialize the Textual UI wrapper."""
         self._app: DebussyTUI | None = None
+        self._controller: OrchestrationController | None = None
 
     @property
     def context(self) -> UIContext:
-        """Return the app's UIContext (single source of truth)."""
+        """Return the controller's UIContext (single source of truth).
+
+        When a controller is set, returns the controller's context.
+        Falls back to app's ui_context for backward compatibility.
+        """
+        if self._controller:
+            return self._controller.context
         if self._app:
             return self._app.ui_context
         # Fallback for when app isn't created yet - shouldn't happen in normal use
@@ -651,7 +727,10 @@ class TextualUI:
     def create_app(
         self, orchestration_coro: Callable[[], Coroutine[Any, Any, str]] | None = None
     ) -> DebussyTUI:
-        """Create and return the Textual app.
+        """Create and return the Textual app with controller.
+
+        Creates the app, then creates an OrchestrationController and
+        injects it into the app for state management.
 
         Args:
             orchestration_coro: Async function that runs the orchestration
@@ -660,6 +739,8 @@ class TextualUI:
             The DebussyTUI app instance
         """
         self._app = DebussyTUI(orchestration_coro=orchestration_coro)
+        self._controller = OrchestrationController(self._app)
+        self._app.set_controller(self._controller)
         return self._app
 
     def run_with_orchestration(
