@@ -17,9 +17,9 @@
 | 5 | UI/business logic mixed in DebussyTUI | 🟡 Architecture | ⏳ Deferred | - |
 | 6 | Duplicate UIContext instances | 🟡 Architecture | ⏳ Deferred | - |
 | 7 | Unnecessary call_later() for async workers | 🟡 Architecture | ⏳ Deferred | - |
-| 8 | Manual HUD refresh instead of reactive | 🟢 Optimization | ⏳ Deferred | - |
-| 9 | RichLog auto_scroll disabled | 🟢 Optimization | ⏳ Deferred | - |
-| 10 | Missing Worker type annotation | 🟢 Optimization | ✅ Fixed | `tui.py:252` |
+| 8 | Manual HUD refresh instead of reactive | 🟢 Optimization | ⏳ Deferred | Already uses reactive attributes; further optimization requires significant refactor |
+| 9 | RichLog auto_scroll disabled | 🟢 Optimization | ✅ Fixed | `tui.py:437-447` (`action_toggle_autoscroll`) + `HotkeyBar.auto_scroll` reactive |
+| 10 | Missing Worker type annotation | 🟢 Optimization | ✅ Fixed | `tui.py:267` |
 
 ### Additional Safety Mechanisms Implemented
 

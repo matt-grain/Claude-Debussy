@@ -156,6 +156,7 @@ class HotkeyBar(Static):
     """Hotkey bar showing available actions and status message."""
 
     verbose = reactive(True)
+    auto_scroll = reactive(False)
     message = reactive("")  # Transient status message
 
     def render(self) -> Text:
@@ -174,6 +175,14 @@ class HotkeyBar(Static):
         # Show current verbose state
         v_state = "on" if self.verbose else "off"
         bar.append(f"({v_state})  ", style="dim italic")
+
+        bar.append("[", style="dim")
+        bar.append("a", style="bold yellow")
+        bar.append("]utoscroll ", style="dim")
+
+        # Show current auto-scroll state
+        a_state = "on" if self.auto_scroll else "off"
+        bar.append(f"({a_state})  ", style="dim italic")
 
         bar.append("s[", style="dim")
         bar.append("k", style="bold yellow")
@@ -235,6 +244,7 @@ class DebussyTUI(App):
         Binding("s", "show_status", "Status", show=False),
         Binding("p", "toggle_pause", "Pause/Resume", show=False),
         Binding("v", "toggle_verbose", "Toggle Verbose", show=False),
+        Binding("a", "toggle_autoscroll", "Toggle Auto-scroll", show=False),
         Binding("k", "skip_phase", "Skip Phase", show=False),
         Binding("q", "quit_orchestration", "Quit", show=False),
     ]
@@ -257,6 +267,7 @@ class DebussyTUI(App):
         self._worker: Worker[str] | None = None  # Properly typed
         self._run_id: str | None = None
         self._shutting_down: bool = False  # Prevent re-entrance during shutdown
+        self._auto_scroll: bool = False  # Log panel auto-scroll state
 
     def compose(self) -> ComposeResult:
         """Compose the app layout."""
@@ -421,6 +432,18 @@ class DebussyTUI(App):
         self.update_hud()
         state_str = "ON" if self.ui_context.verbose else "OFF"
         self.set_hud_message(f"Verbose: {state_str}")
+        self.set_timer(3.0, self.clear_hud_message)
+
+    def action_toggle_autoscroll(self) -> None:
+        """Handle auto-scroll toggle for the log panel."""
+        self._auto_scroll = not self._auto_scroll
+        log = self.query_one("#log", RichLog)
+        log.auto_scroll = self._auto_scroll
+        # Update hotkey bar display
+        hotkey_bar = self.query_one("#hotkey-bar", HotkeyBar)
+        hotkey_bar.auto_scroll = self._auto_scroll
+        state_str = "ON" if self._auto_scroll else "OFF"
+        self.set_hud_message(f"Auto-scroll: {state_str}")
         self.set_timer(3.0, self.clear_hud_message)
 
     def action_skip_phase(self) -> None:
