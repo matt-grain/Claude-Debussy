@@ -80,3 +80,23 @@ class NonInteractiveUI:
         """Confirm action (auto-yes in non-interactive)."""
         self.console.print(f"[yellow]{message}[/yellow] (auto-confirmed in YOLO mode)")
         return True
+
+    def update_token_stats(
+        self,
+        input_tokens: int,
+        output_tokens: int,
+        cost_usd: float,
+        context_tokens: int,
+        context_window: int = 200_000,
+    ) -> None:
+        """Update token usage statistics (no-op for non-interactive)."""
+        # Track session stats
+        self.context.session_input_tokens = input_tokens
+        self.context.session_output_tokens = output_tokens
+        self.context.current_context_tokens = context_tokens
+        self.context.context_window = context_window
+        # Accumulate on final result
+        if cost_usd > 0:
+            self.context.total_input_tokens += input_tokens
+            self.context.total_output_tokens += output_tokens
+            self.context.total_cost_usd += cost_usd

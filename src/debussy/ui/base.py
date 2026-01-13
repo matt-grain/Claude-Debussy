@@ -41,6 +41,15 @@ class UIContext:
     start_time: float = field(default_factory=time.time)
     verbose: bool = True
     last_action: UserAction = UserAction.NONE
+    # Token usage tracking (cumulative across all phases)
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_cost_usd: float = 0.0
+    # Current session tracking (resets per phase)
+    session_input_tokens: int = 0
+    session_output_tokens: int = 0
+    context_window: int = 200_000  # Default Claude context window
+    current_context_tokens: int = 0  # Current session's context usage
 
 
 # Status display configuration

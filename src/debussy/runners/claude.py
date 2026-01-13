@@ -7,12 +7,30 @@ import json
 import sys
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TextIO
 
 from debussy.core.models import ComplianceIssue, ExecutionResult, Phase
 
 OutputMode = Literal["terminal", "file", "both"]
+
+
+@dataclass
+class TokenStats:
+    """Token usage statistics from a Claude session."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+    cost_usd: float = 0.0
+    context_window: int = 200_000
+
+    @property
+    def context_tokens(self) -> int:
+        """Total tokens contributing to context."""
+        return self.input_tokens + self.cache_read_tokens + self.cache_creation_tokens
 
 
 class ClaudeRunner:
@@ -28,6 +46,7 @@ class ClaudeRunner:
         output_mode: OutputMode = "terminal",
         log_dir: Path | None = None,
         output_callback: Callable[[str], None] | None = None,
+        token_stats_callback: Callable[[TokenStats], None] | None = None,
     ) -> None:
         self.project_root = project_root
         self.timeout = timeout
@@ -38,6 +57,7 @@ class ClaudeRunner:
         self.log_dir = log_dir or (project_root / ".debussy" / "logs")
         self._current_log_file: TextIO | None = None
         self._output_callback = output_callback
+        self._token_stats_callback = token_stats_callback
 
     def _write_output(self, text: str, newline: bool = False) -> None:
         """Write output to terminal/file/callback based on output_mode."""
@@ -121,6 +141,8 @@ class ClaudeRunner:
                     full_text.append(text)
                 elif content.get("type") == "tool_use":
                     self._display_tool_use(content)
+            # Extract per-turn usage stats
+            self._handle_assistant_usage(message)
 
         # Handle content block deltas (streaming chunks)
         elif event_type == "content_block_delta":
@@ -138,6 +160,56 @@ class ClaudeRunner:
             for content in content_list:
                 if content.get("type") == "tool_result":
                     self._display_tool_result(content, event.get("tool_use_result", ""))
+
+        # Handle result event (final) - extract token stats
+        elif event_type == "result":
+            self._handle_result_event(event)
+
+    def _handle_assistant_usage(self, message: dict) -> None:
+        """Extract per-turn usage stats from assistant message."""
+        if not self._token_stats_callback:
+            return
+
+        usage = message.get("usage", {})
+        if not usage:
+            return
+
+        # Per-turn stats - these are cumulative within the session
+        stats = TokenStats(
+            input_tokens=usage.get("input_tokens", 0),
+            output_tokens=usage.get("output_tokens", 0),
+            cache_read_tokens=usage.get("cache_read_input_tokens", 0),
+            cache_creation_tokens=usage.get("cache_creation_input_tokens", 0),
+            cost_usd=0.0,  # Cost only available in final result
+            context_window=200_000,
+        )
+        self._token_stats_callback(stats)
+
+    def _handle_result_event(self, event: dict) -> None:
+        """Extract final token stats from the result event (includes cost)."""
+        if not self._token_stats_callback:
+            return
+
+        usage = event.get("usage", {})
+        model_usage = event.get("modelUsage", {})
+
+        # Get context window from model usage (any model will do)
+        context_window = 200_000
+        for model_data in model_usage.values():
+            if "contextWindow" in model_data:
+                context_window = model_data["contextWindow"]
+                break
+
+        # Final result has session totals and cost
+        stats = TokenStats(
+            input_tokens=usage.get("input_tokens", 0),
+            output_tokens=usage.get("output_tokens", 0),
+            cache_read_tokens=usage.get("cache_read_input_tokens", 0),
+            cache_creation_tokens=usage.get("cache_creation_input_tokens", 0),
+            cost_usd=event.get("total_cost_usd", 0.0),
+            context_window=context_window,
+        )
+        self._token_stats_callback(stats)
 
     def _display_tool_use(self, content: dict) -> None:
         """Display tool use with relevant details."""

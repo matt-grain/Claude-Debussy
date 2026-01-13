@@ -21,7 +21,7 @@ from debussy.notifications.desktop import CompositeNotifier, DesktopNotifier
 from debussy.notifications.ntfy import NtfyNotifier
 from debussy.parsers.master import parse_master_plan
 from debussy.parsers.phase import parse_phase
-from debussy.runners.claude import ClaudeRunner
+from debussy.runners.claude import ClaudeRunner, TokenStats
 from debussy.runners.gates import GateRunner
 from debussy.ui import NonInteractiveUI, TextualUI, UIState, UserAction
 
@@ -71,9 +71,21 @@ class Orchestrator:
         # Connect UI to ClaudeRunner for log output routing
         if self.config.interactive:
             self.claude._output_callback = self.ui.log
+            self.claude._token_stats_callback = self._on_token_stats
 
         # Parse master plan
         self.plan: MasterPlan | None = None
+
+    def _on_token_stats(self, stats: TokenStats) -> None:
+        """Handle token stats from Claude runner."""
+        if hasattr(self.ui, "update_token_stats"):
+            self.ui.update_token_stats(
+                input_tokens=stats.input_tokens,
+                output_tokens=stats.output_tokens,
+                cost_usd=stats.cost_usd,
+                context_tokens=stats.context_tokens,
+                context_window=stats.context_window,
+            )
 
     def _create_notifier(self) -> Notifier:
         """Create notifier based on configuration."""

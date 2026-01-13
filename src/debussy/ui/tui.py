@@ -89,12 +89,15 @@ class QuitConfirmScreen(ModalScreen[bool]):
 
 
 class HUDHeader(Static):
-    """Fixed header widget showing phase info, status, and timer."""
+    """Fixed header widget showing phase info, status, timer, and token usage."""
 
     phase_info = reactive("Phase 0/0: Starting...")
     status = reactive("Running")
     status_style = reactive("green")
     elapsed = reactive("00:00:00")
+    context_pct = reactive(0)
+    total_tokens = reactive(0)
+    cost_usd = reactive(0.0)
 
     def render(self) -> Text:
         """Render the HUD header."""
@@ -111,8 +114,37 @@ class HUDHeader(Static):
 
         # Timer
         text.append(f"⏱ {self.elapsed}", style="dim")
+        text.append("  |  ", style="dim")
+
+        # Context window usage (color-coded)
+        pct = self.context_pct
+        if pct < 50:
+            pct_style = "green"
+        elif pct < 80:
+            pct_style = "yellow"
+        else:
+            pct_style = "red bold"
+        text.append(f"📊 {pct}%", style=pct_style)
+        text.append("  |  ", style="dim")
+
+        # Total tokens (formatted with K suffix)
+        tokens_str = self._format_tokens(self.total_tokens)
+        text.append(f"🔤 {tokens_str}", style="dim")
+        text.append("  |  ", style="dim")
+
+        # Cost
+        text.append(f"💰 ${self.cost_usd:.2f}", style="dim")
 
         return text
+
+    @staticmethod
+    def _format_tokens(tokens: int) -> str:
+        """Format token count with K/M suffix."""
+        if tokens >= 1_000_000:
+            return f"{tokens / 1_000_000:.1f}M"
+        if tokens >= 1_000:
+            return f"{tokens / 1_000:.1f}K"
+        return str(tokens)
 
 
 class HotkeyBar(Static):
@@ -278,6 +310,17 @@ class DebussyTUI(App):
 
         # Update verbose state
         hotkey_bar.verbose = ctx.verbose
+
+        # Update token stats - show session tokens (live) + run total cost
+        session_tokens = ctx.session_input_tokens + ctx.session_output_tokens
+        header.total_tokens = session_tokens
+        header.cost_usd = ctx.total_cost_usd
+
+        # Calculate context percentage from current session
+        if ctx.context_window > 0 and ctx.current_context_tokens > 0:
+            header.context_pct = int((ctx.current_context_tokens / ctx.context_window) * 100)
+        else:
+            header.context_pct = 0
 
     def write_log(self, message: str) -> None:
         """Add a message to the log panel."""
@@ -445,6 +488,33 @@ class DebussyTUI(App):
         self.call_later(self.write_log, f"[dim]Verbose logging: {state_str}[/dim]")
         return self.ui_context.verbose
 
+    def update_token_stats(
+        self,
+        input_tokens: int,
+        output_tokens: int,
+        cost_usd: float,
+        context_tokens: int,
+        context_window: int = 200_000,
+    ) -> None:
+        """Update token usage statistics.
+
+        Per-turn updates show cumulative stats within current session.
+        Final result (with cost > 0) adds session totals to run totals.
+        """
+        # Update current session stats (Claude sends cumulative per-session)
+        self.ui_context.session_input_tokens = input_tokens
+        self.ui_context.session_output_tokens = output_tokens
+        self.ui_context.current_context_tokens = context_tokens
+        self.ui_context.context_window = context_window
+
+        # Final result has cost - add session totals to run totals
+        if cost_usd > 0:
+            self.ui_context.total_input_tokens += input_tokens
+            self.ui_context.total_output_tokens += output_tokens
+            self.ui_context.total_cost_usd += cost_usd
+
+        self.call_later(self.update_hud)
+
     def show_status_popup(self, details: dict[str, str]) -> None:
         """Show a detailed status popup."""
         self.call_later(self.write_log, "")
@@ -556,3 +626,17 @@ class TextualUI:
         if self._app:
             return self._app.confirm(message)
         return True
+
+    def update_token_stats(
+        self,
+        input_tokens: int,
+        output_tokens: int,
+        cost_usd: float,
+        context_tokens: int,
+        context_window: int = 200_000,
+    ) -> None:
+        """Update token usage statistics."""
+        if self._app:
+            self._app.update_token_stats(
+                input_tokens, output_tokens, cost_usd, context_tokens, context_window
+            )
