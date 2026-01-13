@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
@@ -17,6 +18,7 @@ from debussy.core.models import CompletionSignal, PhaseStatus, RunStatus
 from debussy.core.orchestrator import run_orchestration
 from debussy.core.state import StateManager
 from debussy.parsers.master import parse_master_plan
+from debussy.ui.controller import OrchestrationController
 
 __version__ = "0.1.1"
 
@@ -193,8 +195,10 @@ def _run_with_tui(
         project_root=Path.cwd(),
     )
 
-    # Create the TUI app
+    # Create the TUI app with controller
     tui = DebussyTUI()
+    controller = OrchestrationController(tui)
+    tui.set_controller(controller)
 
     # Define the orchestration coroutine that will run as a worker
     async def run_orchestration_task() -> str:
@@ -436,6 +440,353 @@ def history(
         )
 
     console.print(table)
+
+
+def _check_ltm_available() -> bool:
+    """Check if LTM is installed."""
+    try:
+        import ltm  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def _copy_resource_file(
+    src: Path,
+    dst: Path,
+    force: bool,
+    file_type: str,
+    inline_writer: Callable[[Path], None] | None = None,
+) -> None:
+    """Copy a resource file to destination, with fallback to inline writer."""
+    import shutil
+
+    if dst.exists() and not force:
+        console.print(f"[yellow]{file_type} exists (skipped): {dst.name}[/yellow]")
+        return
+
+    if src.exists():
+        shutil.copy(src, dst)
+        console.print(f"[green]Installed {file_type}: {dst.name}[/green]")
+    elif inline_writer:
+        inline_writer(dst)
+        console.print(f"[green]Created {file_type}: {dst.name}[/green]")
+
+
+def _copy_command_files(
+    resources_dir: Path,
+    commands_dir: Path,
+    command_names: list[str],
+    force: bool,
+    inline_writer: Callable[[Path, str], None],
+    prefix: str = "",
+) -> None:
+    """Copy command files to target directory."""
+    import shutil
+
+    for cmd_name in command_names:
+        cmd_src = resources_dir / "commands" / f"{cmd_name}.md"
+        cmd_dst = commands_dir / f"{cmd_name}.md"
+
+        if cmd_dst.exists() and not force:
+            console.print(f"[yellow]Command exists (skipped): {cmd_name}[/yellow]")
+            continue
+
+        if cmd_src.exists():
+            shutil.copy(cmd_src, cmd_dst)
+            console.print(f"[green]Installed {prefix}command: /{cmd_name}[/green]")
+        else:
+            inline_writer(cmd_dst, cmd_name)
+            console.print(f"[green]Created {prefix}command: /{cmd_name}[/green]")
+
+
+@app.command()
+def init(
+    target: Annotated[
+        Path,
+        typer.Argument(
+            help="Path to the target project to initialize",
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+            resolve_path=True,
+        ),
+    ] = Path(),
+    force: Annotated[
+        bool,
+        typer.Option("--force", "-f", help="Overwrite existing files"),
+    ] = False,
+    with_ltm: Annotated[
+        bool,
+        typer.Option("--with-ltm", help="Include LTM commands for memory support"),
+    ] = False,
+) -> None:
+    """Initialize a target project for Debussy orchestration.
+
+    Sets up .claude/agents/debussy.md, .claude/skills/debussy.md, and
+    .claude/commands/debussy-*.md files for the spawned Claude agent.
+
+    Use --with-ltm to also install LTM memory commands (/remember, /recall).
+    """
+    # Check LTM availability if requested
+    if with_ltm and not _check_ltm_available():
+        console.print("[yellow]LTM not installed.[/yellow]")
+        console.print("Install with: pip install 'claude-debussy[ltm]'")
+        console.print("Continuing without LTM support...")
+        with_ltm = False
+
+    # Create .claude directory structure
+    claude_dir = target / ".claude"
+    if not claude_dir.exists():
+        claude_dir.mkdir()
+        console.print(f"[green]Created {claude_dir}[/green]")
+
+    agents_dir = claude_dir / "agents"
+    agents_dir.mkdir(exist_ok=True)
+    skills_dir = claude_dir / "skills"
+    skills_dir.mkdir(exist_ok=True)
+    commands_dir = claude_dir / "commands"
+    commands_dir.mkdir(exist_ok=True)
+
+    resources_dir = Path(__file__).parent.parent.parent / "resources"
+
+    # Copy agent, skill, and command files
+    _copy_resource_file(
+        resources_dir / "agents" / "debussy.md",
+        agents_dir / "debussy.md",
+        force,
+        "agent",
+        _write_agent_inline,
+    )
+    _copy_resource_file(
+        resources_dir / "skills" / "debussy.md",
+        skills_dir / "debussy.md",
+        force,
+        "skill",
+        _write_skill_inline,
+    )
+    _copy_command_files(
+        resources_dir,
+        commands_dir,
+        ["debussy-done", "debussy-progress", "debussy-status"],
+        force,
+        _write_command_inline,
+    )
+
+    # Copy LTM commands if requested
+    if with_ltm:
+        _copy_command_files(
+            resources_dir,
+            commands_dir,
+            ["please-remember", "recall"],
+            force,
+            _write_ltm_command_inline,
+            prefix="LTM ",
+        )
+
+    console.print("\n[bold]Setup complete![/bold]")
+    if with_ltm:
+        console.print("Debussy agent has access to orchestration + memory commands.")
+    else:
+        console.print("Debussy agent has access to orchestration commands.")
+        console.print("[dim]Tip: Use --with-ltm to enable cross-phase memory.[/dim]")
+
+
+def _write_agent_inline(path: Path) -> None:
+    """Write the debussy agent file inline (fallback when resource not found)."""
+    content = """# Debussy - Orchestration Worker Agent
+
+You are Debussy, a focused orchestration worker agent.
+
+## Identity
+
+- **Name**: Debussy
+- **Role**: Phase execution worker for the Debussy orchestrator
+- **Personality**: Focused, methodical, task-oriented
+
+## Your Mission
+
+Execute implementation phases methodically:
+1. Read and follow the phase plan file exactly
+2. Invoke required agents via the Task tool
+3. Run validation gates until they pass
+4. Document your work in the notes output file
+5. Signal completion with `/debussy-done`
+
+## Important Rules
+
+- Follow the Process Wrapper template exactly
+- Use agents via Task tool - don't do their work yourself
+- Run all gates before signaling completion
+- Be thorough - the compliance checker will verify your work
+"""
+    path.write_text(content)
+
+
+def _write_skill_inline(path: Path) -> None:
+    """Write the debussy skill file inline (fallback when resource not found)."""
+    content = """# Debussy Orchestrator Commands
+
+This skill provides commands for interacting with the Debussy orchestrator.
+
+## Commands
+
+### Signal Phase Completion
+
+```
+/debussy-done <PHASE_ID> [STATUS] [REASON]
+```
+
+Examples:
+```
+/debussy-done 1
+/debussy-done 2 completed
+/debussy-done 3 blocked "Waiting for API credentials"
+```
+
+### Log Progress
+
+```
+/debussy-progress <PHASE_ID> <STEP_NAME>
+```
+
+### Check Status
+
+```
+/debussy-status
+```
+
+## Fallback
+
+If the slash commands aren't available, use `uv run debussy` directly:
+
+```bash
+uv run debussy done --phase 1 --status completed
+uv run debussy progress --phase 1 --step "tests:running"
+uv run debussy status
+```
+
+## Important
+
+Always call `/debussy-done` when finishing a phase. The orchestrator waits for this signal.
+"""
+    path.write_text(content)
+
+
+def _write_command_inline(path: Path, command: str) -> None:
+    """Write a debussy command file inline (fallback when resource not found)."""
+    commands = {
+        "debussy-done": """# Signal Phase Completion
+
+Signal to the Debussy orchestrator that the current phase is complete.
+
+## Usage
+
+```
+/debussy-done <PHASE_ID> [STATUS] [REASON]
+```
+
+## Arguments
+
+- `PHASE_ID` (required): The phase ID (e.g., "1", "2", "setup")
+- `STATUS` (optional): completed | blocked | failed (default: completed)
+- `REASON` (optional): Explanation for blocked/failed status
+
+## Implementation
+
+```bash
+uv run debussy done --phase $ARGUMENTS
+```
+""",
+        "debussy-progress": """# Log Phase Progress
+
+Signal to the Debussy orchestrator that you're making progress on a phase.
+
+## Usage
+
+```
+/debussy-progress <PHASE_ID> <STEP_NAME>
+```
+
+## Implementation
+
+```bash
+uv run debussy progress --phase $ARGUMENTS
+```
+""",
+        "debussy-status": """# Check Orchestration Status
+
+View the current Debussy orchestration status.
+
+## Usage
+
+```
+/debussy-status
+```
+
+## Implementation
+
+```bash
+uv run debussy status
+```
+""",
+    }
+    path.write_text(commands.get(command, ""))
+
+
+def _write_ltm_command_inline(path: Path, command: str) -> None:
+    """Write LTM command files inline (fallback when resource not found)."""
+    commands = {
+        "please-remember": """# Save to Long-Term Memory
+
+Save important context for future phases.
+
+## Usage
+
+```
+/remember "<memory content>"
+```
+
+## Examples
+
+```
+/remember "Phase 1: Used repository pattern for data access"
+/remember "BLOCKER: Legacy auth code needed refactoring"
+```
+
+## Implementation
+
+```bash
+uv run ltm remember --region project "$ARGUMENTS"
+```
+""",
+        "recall": """# Search Long-Term Memory
+
+Recall memories from previous phases.
+
+## Usage
+
+```
+/recall <search query>
+```
+
+## Examples
+
+```
+/recall auth
+/recall "phase 1"
+/recall blocker
+```
+
+## Implementation
+
+```bash
+uv run ltm recall "$ARGUMENTS"
+```
+""",
+    }
+    path.write_text(commands.get(command, ""))
 
 
 def _dry_run(master_plan: Path) -> None:

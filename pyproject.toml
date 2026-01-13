@@ -25,6 +25,9 @@ dependencies = [
 [project.scripts]
 debussy = "debussy.cli:app"
 
+[project.optional-dependencies]
+ltm = ["ltm"]
+
 [dependency-groups]
 dev = [
     "bandit>=1.9.2",

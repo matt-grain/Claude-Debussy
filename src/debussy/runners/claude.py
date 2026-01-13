@@ -598,7 +598,7 @@ class ClaudeRunner:
                 pid=process.pid if process else None,
             )
 
-    def _build_phase_prompt(self, phase: Phase) -> str:
+    def _build_phase_prompt(self, phase: Phase, with_ltm: bool = False) -> str:
         """Build the prompt for a phase execution."""
         notes_context = ""
         if phase.notes_input and phase.notes_input.exists():
@@ -622,33 +622,54 @@ You MUST invoke these agents using the Task tool: {agents_list}
 When complete, write notes to: `{phase.notes_output}`
 """
 
-        return f"""Execute the implementation phase defined in: `{phase.path}`
+        # LTM context recall for non-first phases
+        ltm_recall = ""
+        if with_ltm and phase.notes_input:
+            ltm_recall = """
+## Recall Previous Context
+Run `/recall` to retrieve memories from previous phases before starting.
+"""
 
-Read the phase plan file and follow the Process Wrapper EXACTLY.
-{notes_context}
-{required_agents}
-{notes_output}
+        # LTM memory instructions
+        ltm_remember = ""
+        if with_ltm:
+            ltm_remember = """
+2. Save key decisions: `/remember "Phase {phase_id}: <what you learned>"`"""
+
+        completion_steps = f"""
 ## Completion
 
 When the phase is complete (all tasks done, all gates passing):
-1. Write notes to the specified output path
-2. Run: `debussy done --phase {phase.id} --report '{{...}}'`
+1. Write notes to the specified output path{ltm_remember}
+3. Signal completion: `/debussy-done {phase.id}`
 
-If you encounter a blocker that prevents completion:
-- Run: `debussy done --phase {phase.id} --status blocked --reason "description"`
+If you encounter a blocker:
+- `/debussy-done {phase.id} blocked "reason for blocker"`
 
+Fallback (if slash commands unavailable):
+- `uv run debussy done --phase {phase.id} --status completed`
+"""
+
+        return f"""Execute the implementation phase defined in: `{phase.path}`
+
+Read the phase plan file and follow the Process Wrapper EXACTLY.
+{notes_context}{ltm_recall}
+{required_agents}
+{notes_output}
+{completion_steps}
 ## Important
 
 - Follow the template Process Wrapper exactly
 - Use the Task tool to invoke required agents (don't do their work yourself)
 - Run all pre-validation commands until they pass
-- The debussy will verify your work - be thorough
+- The compliance checker will verify your work - be thorough
 """
 
     def build_remediation_prompt(
         self,
         phase: Phase,
         issues: list[ComplianceIssue],
+        with_ltm: bool = False,
     ) -> str:
         """Build a remediation prompt for a failed compliance check."""
         issues_text = "\n".join(
@@ -672,10 +693,18 @@ If you encounter a blocker that prevents completion:
         default_action = "- Review and fix all issues"
         actions_text = "\n".join(required_actions) if required_actions else default_action
 
+        # LTM recall for remediation context
+        ltm_section = ""
+        if with_ltm:
+            ltm_section = """
+## Recall Previous Attempt
+Run `/recall` to see what was tried before and why it failed.
+"""
+
         return f"""REMEDIATION SESSION for Phase {phase.id}: {phase.title}
 
 The previous attempt FAILED compliance checks.
-
+{ltm_section}
 ## Issues Found
 {issues_text}
 
@@ -686,7 +715,9 @@ The previous attempt FAILED compliance checks.
 Read and follow: `{phase.path}`
 
 ## When Complete
-Run: `debussy done --phase {phase.id} --report '{{...}}'`
+Signal completion: `/debussy-done {phase.id}`
+
+Fallback: `uv run debussy done --phase {phase.id} --status completed`
 
 IMPORTANT: This is a remediation session. Follow the template EXACTLY.
 All required agents MUST be invoked via the Task tool - do not do their work yourself.

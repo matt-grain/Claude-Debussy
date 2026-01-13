@@ -23,6 +23,9 @@ uv pip install -e .
 
 # Or add to your project
 uv add --dev "claude-debussy @ file:///path/to/Claude-Debussy"
+
+# With LTM support (cross-phase memory)
+uv pip install -e ".[ltm]"
 ```
 
 ## Quick Start
@@ -159,6 +162,27 @@ Resume a paused orchestration run.
 debussy resume
 ```
 
+### `debussy init`
+
+Initialize a target project for Debussy orchestration.
+
+```bash
+# Basic setup - installs agent, skill, and commands
+debussy init /path/to/project
+
+# With LTM memory support (cross-phase memory)
+debussy init /path/to/project --with-ltm
+
+# Force overwrite existing files
+debussy init /path/to/project --force
+```
+
+This creates:
+- `.claude/agents/debussy.md` - Debussy worker agent identity
+- `.claude/skills/debussy.md` - Command documentation
+- `.claude/commands/debussy-*.md` - Slash commands (`/debussy-done`, `/debussy-progress`, `/debussy-status`)
+- `.claude/commands/please-remember.md`, `recall.md` - LTM commands (with `--with-ltm`)
+
 ## Configuration
 
 Create `.debussy/config.yaml`:
@@ -294,6 +318,24 @@ debussy status
 debussy history
 ```
 
+## LTM Integration (Optional)
+
+Debussy can integrate with [Claude-LTM](https://github.com/matt-grain/Claude-LTM) for cross-phase memory:
+
+```bash
+# Install with LTM support
+pip install 'claude-debussy[ltm]'
+
+# Initialize project with memory commands
+debussy init /path/to/project --with-ltm
+```
+
+When enabled, the spawned Debussy agent can:
+- `/recall` - Retrieve memories from previous phases before starting
+- `/remember` - Save key decisions, blockers, and lessons learned
+
+Memories are **project-scoped** - each orchestrated project has its own memory context.
+
 ## Architecture
 
 ```
@@ -349,3 +391,8 @@ MIT
 ## Credits
 
 Built with Claude Code by @matt-grain and Anima (Claude).
+
+## Why Debussy ?
+
+From Wikipedia, about [Claude Debussy](https://fr.wikipedia.org/wiki/Claude_Debussy)
+> Son génie de l’orchestration et son attention aiguë aux couleurs instrumentales font de Debussy le digne héritier de Berlioz et l’égal au moins de son contemporain Ravel.
