@@ -2,7 +2,7 @@
 
 **Issue:** #5 from TUI_CODE_REVIEW.md - "UI/business logic mixed in DebussyTUI"
 **Date:** 2026-01-13
-**Status:** In Progress
+**Status:** Complete
 
 ---
 
@@ -13,8 +13,8 @@
 | #1 | Add message types and controller skeleton | ✅ Complete | e64ba9b |
 | #2 | Implement controller business logic | ✅ Complete | bb7a5b7 |
 | #3 | Add controller integration with backward compatibility | ✅ Complete | 79a76aa |
-| #4 | Add TUI message handlers | ✅ Complete | 503fded |
-| #5 | Remove deprecated direct update code | ⏳ Pending | - |
+| #4 | Add TUI message handlers | ✅ Complete | bbb640f |
+| #5 | Remove deprecated direct update code | ✅ Complete | eb2ee92 |
 
 ---
 

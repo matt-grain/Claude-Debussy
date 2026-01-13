@@ -753,29 +753,29 @@ class TestControllerIntegrationActions:
         mock_controller.queue_action.assert_called_once_with(UserAction.SKIP)
 
 
-class TestBackwardCompatibility:
-    """Test backward compatibility when controller is not set (PR #3)."""
+class TestControllerRequired:
+    """Test that controller is required (PR #5)."""
 
-    def test_start_without_controller(self) -> None:
-        """start() should work without controller (old path)."""
-        from unittest.mock import patch
-
+    def test_ui_context_raises_without_controller(self) -> None:
+        """ui_context should raise RuntimeError without controller."""
         from debussy.ui.tui import DebussyTUI
 
         app = DebussyTUI()
-        # No controller set
 
-        with patch.object(app, "update_hud"), patch.object(app, "write_log"):
+        with pytest.raises(RuntimeError, match="Controller not set"):
+            _ = app.ui_context
+
+    def test_start_raises_without_controller(self) -> None:
+        """start() should raise RuntimeError without controller."""
+        from debussy.ui.tui import DebussyTUI
+
+        app = DebussyTUI()
+
+        with pytest.raises(RuntimeError, match="Controller not set"):
             app.start("test-plan", 3)
 
-        assert app.ui_context.plan_name == "test-plan"
-        assert app.ui_context.total_phases == 3
-        assert app.ui_context.state == UIState.RUNNING
-
-    def test_set_phase_without_controller(self) -> None:
-        """set_phase() should work without controller (old path)."""
-        from unittest.mock import patch
-
+    def test_set_phase_raises_without_controller(self) -> None:
+        """set_phase() should raise RuntimeError without controller."""
         from debussy.ui.tui import DebussyTUI
 
         app = DebussyTUI()
@@ -783,66 +783,17 @@ class TestBackwardCompatibility:
         mock_phase.id = "p1"
         mock_phase.title = "Setup"
 
-        with patch.object(app, "update_hud"):
+        with pytest.raises(RuntimeError, match="Controller not set"):
             app.set_phase(mock_phase, 1)
 
-        assert app.ui_context.current_phase == "p1"
-        assert app.ui_context.phase_title == "Setup"
-        assert app.ui_context.phase_index == 1
-
-    def test_set_state_without_controller(self) -> None:
-        """set_state() should work without controller (old path)."""
-        from unittest.mock import patch
-
+    def test_get_pending_action_raises_without_controller(self) -> None:
+        """get_pending_action() should raise RuntimeError without controller."""
         from debussy.ui.tui import DebussyTUI
 
         app = DebussyTUI()
 
-        with patch.object(app, "update_hud"):
-            app.set_state(UIState.PAUSED)
-
-        assert app.ui_context.state == UIState.PAUSED
-
-    def test_get_pending_action_without_controller(self) -> None:
-        """get_pending_action() should work without controller (old path)."""
-        from debussy.ui.tui import DebussyTUI
-
-        app = DebussyTUI()
-        app._action_queue.append(UserAction.SKIP)
-
-        result = app.get_pending_action()
-
-        assert result == UserAction.SKIP
-
-    def test_toggle_verbose_without_controller(self) -> None:
-        """toggle_verbose() should work without controller (old path)."""
-        from unittest.mock import patch
-
-        from debussy.ui.tui import DebussyTUI
-
-        app = DebussyTUI()
-        assert app.ui_context.verbose is True
-
-        with patch.object(app, "update_hud"), patch.object(app, "write_log"):
-            result = app.toggle_verbose()
-
-        assert result is False
-        assert app.ui_context.verbose is False
-
-    def test_update_token_stats_without_controller(self) -> None:
-        """update_token_stats() should work without controller (old path)."""
-        from unittest.mock import patch
-
-        from debussy.ui.tui import DebussyTUI
-
-        app = DebussyTUI()
-
-        with patch.object(app, "update_hud"):
-            app.update_token_stats(100, 50, 0.05, 150, 200_000)
-
-        assert app.ui_context.session_input_tokens == 100
-        assert app.ui_context.session_output_tokens == 50
-        assert app.ui_context.total_cost_usd == 0.05
+        with pytest.raises(RuntimeError, match="Controller not set"):
+            app.get_pending_action()
 
 
 # =============================================================================
@@ -955,11 +906,14 @@ class TestTUIMessageHandlers:
         """on_log_message() with raw=True should always write to log."""
         from unittest.mock import patch
 
+        from debussy.ui.controller import OrchestrationController
         from debussy.ui.messages import LogMessage
         from debussy.ui.tui import DebussyTUI
 
         app = DebussyTUI()
-        app.ui_context.verbose = False  # Verbose OFF
+        controller = OrchestrationController(app)
+        app.set_controller(controller)
+        controller.context.verbose = False  # Verbose OFF
 
         with patch.object(app, "write_log") as mock_write:
             message = LogMessage("Important message", raw=True)
@@ -971,11 +925,14 @@ class TestTUIMessageHandlers:
         """on_log_message() with raw=False should respect verbose=True."""
         from unittest.mock import patch
 
+        from debussy.ui.controller import OrchestrationController
         from debussy.ui.messages import LogMessage
         from debussy.ui.tui import DebussyTUI
 
         app = DebussyTUI()
-        app.ui_context.verbose = True  # Verbose ON
+        controller = OrchestrationController(app)
+        app.set_controller(controller)
+        controller.context.verbose = True  # Verbose ON
 
         with patch.object(app, "write_log") as mock_write:
             message = LogMessage("Debug message", raw=False)
@@ -987,11 +944,14 @@ class TestTUIMessageHandlers:
         """on_log_message() with raw=False should respect verbose=False."""
         from unittest.mock import patch
 
+        from debussy.ui.controller import OrchestrationController
         from debussy.ui.messages import LogMessage
         from debussy.ui.tui import DebussyTUI
 
         app = DebussyTUI()
-        app.ui_context.verbose = False  # Verbose OFF
+        controller = OrchestrationController(app)
+        app.set_controller(controller)
+        controller.context.verbose = False  # Verbose OFF
 
         with patch.object(app, "write_log") as mock_write:
             message = LogMessage("Debug message", raw=False)
