@@ -36,10 +36,12 @@ But `sqlite3` is not installed in the Docker container.
 /bin/bash: line 1: sqlite3: command not found
 ```
 
+**Decision:** Workers should NOT have direct database access - it's a security risk and leaky abstraction.
+
 **Recommendation:**
-- Either install `sqlite3` in the sandbox container
-- Or provide a `debussy query` command that the worker can use
-- Or document that workers should use `debussy status` instead of raw DB queries
+- Do NOT install `sqlite3` in the container (intentional)
+- Provide `debussy status` and `debussy query` CLI commands for workers
+- Document clearly: "Use `debussy status` to check orchestration state, never access state.db directly"
 
 #### 3. Worker Modified MASTER_TEMPLATE.md
 
@@ -120,7 +122,7 @@ From the JSONL log:
 
 4. **Protected Files** - Prevent workers from modifying templates and other source-of-truth files
 5. **Better CLI Discovery** - Include `--help` snippets in phase plans or worker context
-6. **sqlite3 Alternative** - Either install it in container or provide `debussy query` command
+6. **API-Only State Access** - Workers use `debussy status`/`debussy query`, never direct sqlite3 (security boundary)
 
 ### Low Priority
 
