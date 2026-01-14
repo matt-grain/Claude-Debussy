@@ -1,0 +1,59 @@
+# Debussy Sandbox Image
+# Based on Anthropic's official Claude Code DevContainer
+# https://github.com/anthropics/claude-code/tree/main/.devcontainer
+
+FROM node:20-slim
+
+# Build args
+ARG CLAUDE_VERSION=latest
+ARG TZ=UTC
+
+# System dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    ca-certificates \
+    iptables \
+    ipset \
+    dnsutils \
+    jq \
+    sudo \
+    # Python tooling for Debussy quality gates
+    python3 \
+    python3-pip \
+    python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user (use UID 1001 since node image has UID 1000)
+RUN useradd -m -s /bin/bash -u 1001 claude \
+    && mkdir -p /workspace \
+    && chown claude:claude /workspace
+
+# Install uv for fast Python package management (as claude user)
+USER claude
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Install Debussy and LTM as CLI tools (for /debussy-done and /remember skills)
+# These are needed inside the container for Claude to signal phase completion and save learnings
+# Install from GitHub since these packages are not published to PyPI
+RUN /home/claude/.local/bin/uv tool install git+https://github.com/matt-grain/Claude-Debussy.git \
+    && /home/claude/.local/bin/uv tool install git+https://github.com/matt-grain/claude-ltm.git
+USER root
+
+# Install Claude Code globally
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_VERSION}
+
+# Copy firewall init script
+COPY init-firewall.sh /usr/local/bin/init-firewall.sh
+RUN chmod +x /usr/local/bin/init-firewall.sh \
+    && echo "claude ALL=(ALL) NOPASSWD: /usr/local/bin/init-firewall.sh" >> /etc/sudoers
+
+# Switch to non-root user
+USER claude
+WORKDIR /workspace
+
+# Add uv to PATH for the claude user
+ENV PATH="/home/claude/.local/bin:${PATH}"
+
+# Default entrypoint is claude CLI
+ENTRYPOINT ["claude"]

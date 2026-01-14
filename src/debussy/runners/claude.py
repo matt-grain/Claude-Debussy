@@ -7,7 +7,11 @@ import atexit
 import json
 import logging
 import os
+import platform
+import shlex
+import shutil
 import signal
+import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -19,6 +23,72 @@ from typing import Literal, TextIO
 from debussy.core.models import ComplianceIssue, ExecutionResult, Phase
 
 logger = logging.getLogger(__name__)
+
+# Docker sandbox image name
+SANDBOX_IMAGE = "debussy-sandbox:latest"
+
+
+def _get_docker_command() -> list[str]:
+    """Get the docker command prefix, using WSL on Windows if needed."""
+    if shutil.which("docker"):
+        return ["docker"]
+    # On Windows, try docker through WSL
+    if platform.system() == "Windows" and shutil.which("wsl"):
+        return ["wsl", "docker"]
+    return ["docker"]  # Will fail, but gives clear error
+
+
+def _is_docker_available() -> bool:
+    """Check if Docker is installed and the daemon is running."""
+    docker_cmd = _get_docker_command()
+    # If using WSL, we don't need which() check
+    if docker_cmd[0] != "wsl" and not shutil.which("docker"):
+        return False
+    try:
+        result = subprocess.run(
+            [*docker_cmd, "info"],
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _is_sandbox_image_available() -> bool:
+    """Check if the debussy-sandbox Docker image is built."""
+    try:
+        docker_cmd = _get_docker_command()
+        result = subprocess.run(
+            [*docker_cmd, "images", "-q", SANDBOX_IMAGE],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        return bool(result.stdout.strip())
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _normalize_path_for_docker(path: Path, use_wsl: bool = False) -> str:
+    """Convert Windows path to Docker-compatible format.
+
+    When use_wsl=False (Docker Desktop native):
+        C:\\Projects\\foo -> /c/Projects/foo
+    When use_wsl=True (Docker via WSL):
+        C:\\Projects\\foo -> /mnt/c/Projects/foo
+    """
+    if platform.system() == "Windows":
+        path_str = str(path.resolve())
+        if len(path_str) >= 2 and path_str[1] == ":":
+            drive = path_str[0].lower()
+            rest = path_str[2:].replace("\\", "/")
+            if use_wsl:
+                return f"/mnt/{drive}{rest}"
+            return f"/{drive}{rest}"
+    return str(path)
 
 
 # =============================================================================
@@ -190,6 +260,7 @@ class ClaudeRunner:
         token_stats_callback: Callable[[TokenStats], None] | None = None,
         agent_change_callback: Callable[[str], None] | None = None,
         with_ltm: bool = False,
+        sandbox_mode: Literal["none", "devcontainer"] = "none",
     ) -> None:
         self.project_root = project_root
         self.timeout = timeout
@@ -207,6 +278,7 @@ class ClaudeRunner:
         # Track active Task tool_use_ids -> subagent_type for subagent output display
         self._pending_task_ids: dict[str, str] = {}
         self._with_ltm = with_ltm  # Enable LTM learnings in prompts
+        self._sandbox_mode = sandbox_mode  # Docker sandbox mode
 
     def _write_output(self, text: str, newline: bool = False) -> None:
         """Write output to terminal/file/callback based on output_mode."""
@@ -281,6 +353,122 @@ class ClaudeRunner:
         if self._current_log_file:
             self._current_log_file.close()
             self._current_log_file = None
+
+    def _build_claude_command(self, prompt: str) -> list[str]:
+        """Build Claude CLI command, optionally wrapped in Docker.
+
+        Returns the command list ready for asyncio.create_subprocess_exec().
+        """
+        base_args = [
+            "--print",
+            "--verbose",
+            "--output-format",
+            "stream-json",
+            "--dangerously-skip-permissions",
+            "--model",
+            self.model,
+        ]
+
+        if self._sandbox_mode == "devcontainer":
+            # Run Claude inside Docker container
+            # On Windows with Git Bash, we must wrap the entire docker command in 'wsl -e sh -c'
+            # to prevent MSYS path conversion from mangling Linux paths like /home/claude
+            docker_cmd = _get_docker_command()
+            use_wsl = docker_cmd[0] == "wsl"
+            project_path = _normalize_path_for_docker(self.project_root, use_wsl=use_wsl)
+
+            # Build volume mounts (no // prefix needed when using sh -c wrapper)
+            volumes = ["-v", f"{project_path}:/workspace:rw"]
+
+            # Exclude host-specific directories by mounting empty tmpfs over them
+            # This prevents Windows .venv, __pycache__, .git from breaking Linux container
+            excluded_dirs = [
+                ".venv",
+                ".git",
+                "__pycache__",
+                ".pytest_cache",
+                ".mypy_cache",
+                ".ruff_cache",
+            ]
+            for excluded in excluded_dirs:
+                volumes.append(f"--mount type=tmpfs,destination=/workspace/{excluded}")
+
+            # Mount Claude credentials for OAuth authentication
+            # Note: mounted as rw because Claude writes to debug/, stats-cache.json, etc.
+            claude_config_dir = Path.home() / ".claude"
+            if claude_config_dir.exists():
+                claude_config_path = _normalize_path_for_docker(claude_config_dir, use_wsl=use_wsl)
+                volumes.append(f"-v {claude_config_path}:/home/claude/.claude:rw")
+
+            # Build env vars
+            # CRITICAL: Set PATH explicitly to prevent host PATH from overriding container.
+            container_path = (
+                "/home/claude/.local/bin:/usr/local/sbin:/usr/local/bin"
+                ":/usr/sbin:/usr/bin:/sbin:/bin"
+            )
+            env_vars = [f"-e PATH={container_path}"]
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if api_key:
+                env_vars.append(f"-e ANTHROPIC_API_KEY={api_key}")
+
+            # Build the full docker command as a shell string
+            # This prevents Git Bash from mangling paths when passed through WSL
+            # CRITICAL: The prompt must be shell-quoted as it contains spaces, newlines, etc.
+            quoted_prompt = shlex.quote(prompt)
+            docker_args = [
+                "docker run",
+                "--rm",  # Remove container after exit
+                "-i",  # Interactive for stdin streaming
+                *volumes,
+                "-w /workspace",
+                *env_vars,
+                "--cap-add=NET_ADMIN",
+                "--cap-add=NET_RAW",
+                SANDBOX_IMAGE,
+                *base_args,
+                "-p",
+                quoted_prompt,
+            ]
+            docker_command_str = " ".join(docker_args)
+
+            if use_wsl:
+                # Wrap in 'wsl -e sh -c' to avoid Git Bash path mangling
+                return ["wsl", "-e", "sh", "-c", docker_command_str]
+            else:
+                # Direct docker execution (non-Windows or native Docker)
+                return ["sh", "-c", docker_command_str]
+        else:
+            # Direct execution (no sandbox) - prompt passed directly, no shell quoting
+            return [self.claude_command, *base_args, "-p", prompt]
+
+    def validate_sandbox_mode(self) -> None:
+        """Validate that sandbox mode can be used. Raises RuntimeError if not."""
+        if self._sandbox_mode != "devcontainer":
+            return
+
+        if not _is_docker_available():
+            raise RuntimeError(
+                "sandbox_mode is 'devcontainer' but Docker is not available.\n"
+                "Install Docker Desktop or set sandbox_mode: none in config."
+            )
+
+        if not _is_sandbox_image_available():
+            raise RuntimeError(
+                f"Docker image '{SANDBOX_IMAGE}' not found.\nBuild it with: debussy sandbox build"
+            )
+
+    def _build_subprocess_kwargs(self) -> dict:
+        """Build kwargs for asyncio.create_subprocess_exec."""
+        kwargs: dict = {
+            "stdout": asyncio.subprocess.PIPE,
+            "stderr": asyncio.subprocess.PIPE,
+        }
+        # For Docker, don't set cwd (container has its own /workspace)
+        if self._sandbox_mode != "devcontainer":
+            kwargs["cwd"] = self.project_root
+        if sys.platform != "win32":
+            kwargs["start_new_session"] = True
+        return kwargs
 
     async def _stream_json_reader(
         self,
@@ -462,6 +650,14 @@ class ClaudeRunner:
         if self._agent_change_callback:
             self._agent_change_callback(agent)
 
+    def _log_execution_mode(self) -> None:
+        """Log the execution mode (local or Docker sandbox) to the output."""
+        if self._sandbox_mode == "devcontainer":
+            self._write_output(f"[Sandbox: Docker container {SANDBOX_IMAGE}]\n")
+        else:
+            project_path = str(self.project_root)
+            self._write_output(f"[Local: {project_path}]\n")
+
     def _display_tool_result(self, content: dict, result_text: str) -> None:
         """Display abbreviated tool result."""
         tool_use_id = content.get("tool_use_id", "")
@@ -624,27 +820,14 @@ class ClaudeRunner:
         start_time = time.time()
         process: asyncio.subprocess.Process | None = None
         try:
-            # On Unix, create new session for process group management
-            create_kwargs: dict = {
-                "stdout": asyncio.subprocess.PIPE,
-                "stderr": asyncio.subprocess.PIPE,
-                "cwd": self.project_root,
-            }
-            if sys.platform != "win32":
-                create_kwargs["start_new_session"] = True
+            cmd = self._build_claude_command(prompt)
+            logger.debug(f"Running command: {' '.join(cmd[:10])}...")
+
+            # Show execution mode in logs
+            self._log_execution_mode()
 
             process = await asyncio.create_subprocess_exec(
-                self.claude_command,
-                "--print",
-                "--verbose",
-                "--output-format",
-                "stream-json",
-                "--dangerously-skip-permissions",  # Required for automated workflows
-                "--model",
-                self.model,
-                "-p",
-                prompt,
-                **create_kwargs,
+                cmd[0], *cmd[1:], **self._build_subprocess_kwargs()
             )
 
             # Register PID for safety cleanup
@@ -732,11 +915,17 @@ class ClaudeRunner:
 
     def _build_phase_prompt(self, phase: Phase, with_ltm: bool = False) -> str:
         """Build the prompt for a phase execution."""
+
+        # Helper to convert Windows paths to forward slashes
+        def to_posix(p: Path | None) -> str:
+            return str(p).replace("\\", "/") if p else ""
+
         notes_context = ""
         if phase.notes_input and phase.notes_input.exists():
+            notes_input_str = to_posix(phase.notes_input)
             notes_context = f"""
 ## Previous Phase Notes
-Read the context from the previous phase: `{phase.notes_input}`
+Use the Read tool to read context from the previous phase: {notes_input_str}
 """
 
         required_agents = ""
@@ -749,9 +938,10 @@ You MUST invoke these agents using the Task tool: {agents_list}
 
         notes_output = ""
         if phase.notes_output:
+            notes_output_str = to_posix(phase.notes_output)
             notes_output = f"""
 ## Notes Output
-When complete, write notes to: `{phase.notes_output}`
+Use the Write tool to write notes to: {notes_output_str}
 """
 
         # LTM context recall for non-first phases
@@ -813,7 +1003,11 @@ Fallback (if slash commands unavailable):
 - `uv run debussy done --phase {phase.id} --status completed`
 """
 
-        return f"""Execute the implementation phase defined in: `{phase.path}`
+        phase_path_str = to_posix(phase.path)
+
+        return f"""Execute the implementation phase defined in the file: {phase_path_str}
+
+**IMPORTANT: Use the Read tool to read this file path. Do NOT try to execute paths as commands.**
 
 Read the phase plan file and follow the Process Wrapper EXACTLY.
 {notes_context}{ltm_recall}
@@ -827,6 +1021,8 @@ Read the phase plan file and follow the Process Wrapper EXACTLY.
 - Use the Task tool to invoke required agents (don't do their work yourself)
 - Run all pre-validation commands until they pass
 - The compliance checker will verify your work - be thorough
+- **File paths are for reading with the Read tool, not executing with Bash**
+- **Slash commands like /debussy-done use the Skill tool, not Bash**
 """
 
     def build_remediation_prompt(
@@ -836,17 +1032,23 @@ Read the phase plan file and follow the Process Wrapper EXACTLY.
         with_ltm: bool = False,
     ) -> str:
         """Build a remediation prompt for a failed compliance check."""
+
+        # Helper to convert Windows paths to forward slashes
+        def to_posix(p: Path | None) -> str:
+            return str(p).replace("\\", "/") if p else ""
+
         issues_text = "\n".join(
             f"- [{issue.severity.upper()}] {issue.type.value}: {issue.details}" for issue in issues
         )
 
+        notes_output_str = to_posix(phase.notes_output)
         required_actions: list[str] = []
         for issue in issues:
             if issue.type.value == "agent_skipped":
                 agent_name = issue.details.split("'")[1]
                 required_actions.append(f"- Invoke the {agent_name} agent using Task tool")
             elif issue.type.value == "notes_missing":
-                required_actions.append(f"- Write notes to: {phase.notes_output}")
+                required_actions.append(f"- Write notes to: {notes_output_str}")
             elif issue.type.value == "notes_incomplete":
                 required_actions.append("- Complete all required sections in the notes file")
             elif issue.type.value == "gates_failed":
@@ -862,7 +1064,7 @@ Read the phase plan file and follow the Process Wrapper EXACTLY.
         if with_ltm:
             ltm_section = f"""
 ## Recall Previous Attempts (LTM Enabled)
-Run `/recall phase:{phase.id}` to see learnings from previous runs of this phase.
+Use the Skill tool to run: /recall phase:{phase.id}
 This may include fixes for similar issues encountered before.
 """
 
@@ -871,12 +1073,12 @@ This may include fixes for similar issues encountered before.
         if with_ltm:
             ltm_learnings = f"""
 ## Save Remediation Learnings
-After fixing the issues, save what you learned:
-```
+After fixing the issues, use the Skill tool to save what you learned:
 /remember --priority HIGH --tags phase:{phase.id},agent:Debussy,remediation "description of fix"
-```
 High priority ensures this learning persists for future remediation attempts.
 """
+
+        phase_path_str = to_posix(phase.path)
 
         return f"""REMEDIATION SESSION for Phase {phase.id}: {phase.title}
 
@@ -889,10 +1091,10 @@ The previous attempt FAILED compliance checks.
 {actions_text}
 
 ## Original Phase Plan
-Read and follow: `{phase.path}`
+Use the Read tool to read: {phase_path_str}
 {ltm_learnings}
 ## When Complete
-Signal completion: `/debussy-done {phase.id}`
+Use the Skill tool to signal completion: /debussy-done {phase.id}
 
 Fallback: `uv run debussy done --phase {phase.id} --status completed`
 
