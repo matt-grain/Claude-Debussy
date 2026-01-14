@@ -249,12 +249,30 @@ def run(
     if sandbox is not None:
         config.sandbox_mode = "devcontainer" if sandbox else "none"
 
-    # Security warning for non-sandboxed mode in non-interactive mode
-    if config.sandbox_mode == "none" and not interactive and not accept_risks:
-        console.print("[bold red]SECURITY WARNING[/bold red]")
-        console.print("Running without sandbox gives Claude FULL ACCESS to your system.")
-        console.print("Use --sandbox to enable Docker isolation, or --accept-risks to proceed.")
-        raise typer.Exit(1)
+    # Security warning for non-sandboxed mode
+    if config.sandbox_mode == "none" and not accept_risks:
+        if not interactive:
+            # Non-interactive mode: require --accept-risks flag
+            console.print("[bold red]SECURITY WARNING[/bold red]")
+            console.print("Running without sandbox gives Claude FULL ACCESS to your system.")
+            console.print("Use --sandbox to enable Docker isolation, or --accept-risks to proceed.")
+            raise typer.Exit(1)
+        else:
+            # Interactive mode: show confirmation prompt
+            console.print()
+            console.print("[bold red]⚠️  SECURITY WARNING[/bold red]")
+            console.print()
+            console.print("Running without sandbox gives Claude [bold]FULL ACCESS[/bold] to your system:")
+            console.print("  • Read/write any file")
+            console.print("  • Execute any command")
+            console.print("  • Access network resources")
+            console.print()
+            console.print("[dim]Use --sandbox to run Claude in Docker isolation instead.[/dim]")
+            console.print()
+            confirm = typer.confirm("Do you want to proceed without sandbox?", default=False)
+            if not confirm:
+                console.print("[yellow]Aborted. Use --sandbox for safer execution.[/yellow]")
+                raise typer.Exit(0)
 
     # Parse plan and display banner (skip for TUI - it has its own header)
     plan = parse_master_plan(master_plan)
