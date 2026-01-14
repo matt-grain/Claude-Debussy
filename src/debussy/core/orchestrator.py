@@ -183,6 +183,10 @@ class Orchestrator:
         # Start interactive UI
         self.ui.start(self.plan.name, len(self.plan.phases))
 
+        # Set model name for HUD display
+        if hasattr(self.ui, "set_model"):
+            self.ui.set_model(self.config.model)
+
         try:
             phases_to_run = self.plan.phases
             if start_phase:

@@ -104,3 +104,7 @@ class NonInteractiveUI:
     def set_active_agent(self, _agent: str) -> None:
         """Update active agent (no-op for non-interactive)."""
         pass
+
+    def set_model(self, _model: str) -> None:
+        """Update model name (no-op for non-interactive)."""
+        pass

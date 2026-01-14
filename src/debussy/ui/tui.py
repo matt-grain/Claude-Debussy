@@ -188,6 +188,7 @@ class HUDHeader(Static):
     total_tokens = reactive(0)
     cost_usd = reactive(0.0)
     active_agent = reactive("Debussy")  # Current agent (Debussy, Explore, etc.)
+    model = reactive("")  # Current Claude model (e.g., "opus", "sonnet", "haiku")
 
     def render(self) -> Text:
         """Render the HUD header."""
@@ -202,12 +203,15 @@ class HUDHeader(Static):
         text.append(f"● {self.status}", style=self.status_style)
         text.append("  |  ", style="dim")
 
-        # Active agent (highlighted when not Debussy)
+        # Active agent with model (highlighted when not Debussy)
         agent = self.active_agent
+        model_suffix = f" ({self.model})" if self.model else ""
         if agent == "Debussy":
-            text.append(f"🎹 {agent}", style="dim")
+            text.append(f"🎹 {agent}{model_suffix}", style="dim")
         else:
             text.append(f"🤖 {agent}", style="bold magenta")
+            if model_suffix:
+                text.append(model_suffix, style="dim")
         text.append("  |  ", style="dim")
 
         # Timer
@@ -842,6 +846,11 @@ class DebussyTUI(App):
         header = self.query_one("#hud-header", HUDHeader)
         header.active_agent = agent
 
+    def set_model(self, model: str) -> None:
+        """Update the model name display in the HUD."""
+        header = self.query_one("#hud-header", HUDHeader)
+        header.model = model
+
 
 class TextualUI:
     """Wrapper that provides the UI interface backed by DebussyTUI.
@@ -973,3 +982,8 @@ class TextualUI:
         """Update the active agent display."""
         if self._app:
             self._app.set_active_agent(agent)
+
+    def set_model(self, model: str) -> None:
+        """Update the model name display."""
+        if self._app:
+            self._app.set_model(model)
