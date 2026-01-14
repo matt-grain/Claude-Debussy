@@ -1,4 +1,4 @@
-# {Feature Name} - Master Plan
+# {feature} - Master Plan
 
 **Created:** {date}
 **Status:** Draft
@@ -20,9 +20,9 @@
 
 | Phase | Title | Focus | Risk | Status |
 |-------|-------|-------|------|--------|
-| 1 | [{Phase 1 Title}]({feature}-phase1.md) | {Brief focus} | Low | Pending |
-| 2 | [{Phase 2 Title}]({feature}-phase2.md) | {Brief focus} | Low | Pending |
-| 3 | [{Phase 3 Title}]({feature}-phase3.md) | {Brief focus} | Medium | Pending |
+| 1 | [{phase_1_title}]({feature_slug}-phase-1.md) | {Brief focus} | Low | Pending |
+| 2 | [{phase_2_title}]({feature_slug}-phase-2.md) | {Brief focus} | Low | Pending |
+| 3 | [{phase_3_title}]({feature_slug}-phase-3.md) | {Brief focus} | Medium | Pending |
 
 ## Success Metrics
 

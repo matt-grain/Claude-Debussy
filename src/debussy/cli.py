@@ -257,7 +257,7 @@ def run(
     interactive = not no_interactive
     config = Config.load()  # Load from .debussy/config.yaml if exists
     # Apply CLI overrides (only model, output, interactive are typically overridden)
-    config.model = model  # type: ignore[assignment]
+    config.model = model
     config.output = output  # type: ignore[assignment]
     config.interactive = interactive
     # Only override learnings if explicitly set via CLI flag
@@ -470,6 +470,111 @@ def audit(
     if strict and result.summary.warnings > 0:
         console.print("[yellow]Strict mode: Failing due to warnings[/yellow]\n")
         raise typer.Exit(1)
+
+
+@app.command("plan-init")
+def plan_init(
+    feature: Annotated[str, typer.Argument(help="Feature name for the plan")],
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Output directory (default: ./plans/{feature}/)"),
+    ] = None,
+    phases: Annotated[
+        int,
+        typer.Option("--phases", "-p", help="Number of phases to generate"),
+    ] = 3,
+    template: Annotated[
+        str,
+        typer.Option("--template", "-t", help="Template type: generic, backend, frontend"),
+    ] = "generic",
+    force: Annotated[
+        bool,
+        typer.Option("--force", "-f", help="Overwrite existing files"),
+    ] = False,
+) -> None:
+    """Initialize a new plan from templates.
+
+    Creates a master plan and phase files from templates.
+
+    Example:
+        debussy plan-init user-auth --phases 3
+        debussy plan-init api-refactor --output plans/api/ --template backend
+    """
+    from debussy.core.auditor import PlanAuditor
+    from debussy.templates import TEMPLATES_DIR
+    from debussy.templates.scaffolder import PlanScaffolder
+
+    # Determine output directory
+    if output is None:
+        feature_slug = feature.lower().replace(" ", "-").replace("_", "-")
+        output = Path("plans") / feature_slug
+
+    # Check if directory exists
+    if output.exists() and not force:
+        console.print(f"[red]Error:[/red] Directory already exists: {output}")
+        console.print("Use --force to overwrite")
+        raise typer.Exit(1)
+
+    console.print(f"\n[bold]Creating plan:[/bold] {feature}\n")
+
+    # Validate template type
+    if template not in ["generic", "backend", "frontend"]:
+        console.print(f"[red]Error:[/red] Invalid template type: {template}")
+        console.print("Valid options: generic, backend, frontend")
+        raise typer.Exit(1)
+
+    # Validate phases count
+    if phases < 1:
+        console.print(f"[red]Error:[/red] Number of phases must be at least 1, got {phases}")
+        raise typer.Exit(1)
+
+    # Create scaffolder and generate files
+    try:
+        scaffolder = PlanScaffolder(TEMPLATES_DIR)
+        created_files = scaffolder.scaffold(
+            feature_name=feature,
+            output_dir=output,
+            num_phases=phases,
+            template_type=template,
+        )
+
+        # Display created files
+        for file_path in created_files:
+            relative = file_path.relative_to(Path.cwd()) if file_path.is_relative_to(Path.cwd()) else file_path
+            console.print(f"  [green]✓[/green] Created: {relative}")
+
+        console.print()
+
+        # Run audit on generated files
+        master_plan = output / "MASTER_PLAN.md"
+        console.print("[bold]Running audit...[/bold]")
+        auditor = PlanAuditor()
+        audit_result = auditor.audit(master_plan)
+
+        if audit_result.passed:
+            console.print("[green]✓ Plan passes audit[/green]\n")
+        else:
+            console.print("[yellow]⚠ Plan has validation issues:[/yellow]")
+            for issue in audit_result.issues:
+                console.print(f"  - {issue.message}")
+            console.print()
+
+        # Success message with next steps
+        console.print("[bold green]Success![/bold green]\n")
+        console.print("[bold]Next steps:[/bold]")
+        # Use relative path if possible, otherwise use absolute
+        display_path = master_plan.relative_to(Path.cwd()) if master_plan.is_relative_to(Path.cwd()) else master_plan
+        console.print(f"1. Edit {display_path} to fill in overview and goals")
+        console.print("2. Edit each phase file to add specific tasks")
+        console.print(f"3. Run: [cyan]debussy run {display_path}[/cyan]\n")
+
+    except FileNotFoundError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        console.print("Templates not found. Please check your installation.")
+        raise typer.Exit(1) from e
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1) from e
 
 
 @app.command()
