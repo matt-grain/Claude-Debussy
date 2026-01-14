@@ -13,20 +13,66 @@ Claude Debussy coordinates complex, multi-phase projects by:
 
 ## Installation
 
+Debussy supports two execution modes:
+- **Standard Mode** (default): Claude runs directly on your machine with full access
+- **Sandbox Mode**: Claude runs inside Docker containers for isolation
+
+### Standard Mode (Recommended for Development)
+
+In standard mode, install Debussy as a dev dependency in your project:
+
 ```bash
-# Clone the repository
-git clone https://github.com/matt-grain/Claude-Debussy.git
-cd Claude-Debussy
+# Add to your project from GitHub
+uv add --dev git+https://github.com/matt-grain/Claude-Debussy.git
 
-# Install with uv
-uv pip install -e .
+# Or with LTM support (cross-phase memory)
+uv add --dev "claude-debussy[ltm] @ git+https://github.com/matt-grain/Claude-Debussy.git"
 
-# Or add to your project
-uv add --dev "claude-debussy @ file:///path/to/Claude-Debussy"
-
-# With LTM support (cross-phase memory)
-uv pip install -e ".[ltm]"
+# Run from your project directory
+uv run debussy run docs/master-plan.md
 ```
+
+This works because Debussy and your project share the same Python environment (`.venv`).
+
+### Sandbox Mode (Recommended for Untrusted Code)
+
+In sandbox mode, Claude workers run inside Docker containers with restricted network access. Because the container uses Linux and shadows your project's `.venv`, Debussy must be installed **separately** on your host machine:
+
+```bash
+# Clone Debussy to a dedicated location
+git clone https://github.com/matt-grain/Claude-Debussy.git ~/tools/debussy
+cd ~/tools/debussy
+uv sync
+
+# Build the sandbox Docker image
+uv run debussy sandbox-build
+
+# Run on your project (from the debussy directory)
+uv run debussy run --sandbox /path/to/your/project/docs/master-plan.md
+```
+
+**Why separate installation?**
+- Debussy runs on the **host** (orchestrating)
+- Claude workers run **inside Docker** (executing code)
+- Your project's Windows `.venv` is incompatible with Linux containers
+- The container shadows `.venv` with an empty tmpfs mount
+
+**Architecture:**
+```
+Host (your machine)
+├── ~/tools/debussy/           # Debussy installation
+│   └── uv run debussy run ... # Orchestrator process
+│
+└── /path/to/your/project/     # Your project (mounted into container)
+    └── Mounted as /workspace in Docker
+        └── Claude CLI runs here (isolated)
+```
+
+### Sandbox Requirements
+
+- Docker Desktop (Windows/macOS) or Docker Engine (Linux)
+- WSL2 (Windows only)
+- ~2GB disk space for the sandbox image
 
 ## Quick Start
 
@@ -129,6 +175,9 @@ Options:
   --output, -o        Output mode: terminal, file, both (default: terminal)
   --no-interactive    YOLO mode: disable interactive dashboard (for CI)
   --yolo              Alias for --no-interactive
+  --sandbox           Run Claude workers in Docker containers (isolated)
+  --no-sandbox        Run Claude workers directly on host (default)
+  --accept-risks      Skip security warning in non-interactive mode without sandbox
 ```
 
 ### `debussy status`
@@ -164,6 +213,22 @@ Resume a paused orchestration run.
 debussy resume
 ```
 
+### `debussy sandbox-build`
+
+Build the Docker sandbox image (required for sandbox mode).
+
+```bash
+debussy sandbox-build [--no-cache]
+```
+
+### `debussy sandbox-status`
+
+Check sandbox prerequisites and image availability.
+
+```bash
+debussy sandbox-status
+```
+
 ### `debussy init`
 
 Initialize a target project for Debussy orchestration.
@@ -196,6 +261,7 @@ model: sonnet          # Default model: haiku, sonnet, opus
 output: terminal       # Output mode: terminal, file, both
 interactive: true      # Interactive dashboard (default: true)
 strict_compliance: true
+sandbox_mode: none     # none (direct) or devcontainer (Docker)
 
 notifications:
   enabled: true
@@ -363,9 +429,11 @@ Memories are **project-scoped** - each orchestrated project has its own memory c
 
 ## Architecture
 
+### Standard Mode (Direct Execution)
+
 ```
 +-------------------------------------------------------------+
-|                    Python Debussy                       |
+|                    Python Debussy (Host)                    |
 |  - Parses master plan and phase files                       |
 |  - Manages state in SQLite                                  |
 |  - Coordinates phase execution                              |
@@ -374,20 +442,50 @@ Memories are **project-scoped** - each orchestrated project has its own memory c
                               |
                               v
 +-------------------------------------------------------------+
-|                   Claude CLI Sessions                        |
+|                   Claude CLI Sessions (Host)                |
 |  - Fresh session per phase (no token limits)                |
 |  - --dangerously-skip-permissions for automation            |
 |  - --output-format stream-json for real-time output         |
-|  - Calls `debussy done` when complete                   |
+|  - Calls `debussy done` when complete                       |
 +-------------------------------------------------------------+
                               |
                               v
 +-------------------------------------------------------------+
-|                  Compliance Checker                          |
+|                  Compliance Checker (Host)                  |
 |  - Re-runs all gates independently                          |
 |  - Verifies required agents were invoked                    |
 |  - Checks notes file exists with required sections          |
 |  - Determines remediation strategy on failure               |
++-------------------------------------------------------------+
+```
+
+### Sandbox Mode (Docker Isolation)
+
+```
++-------------------------------------------------------------+
+|                    Python Debussy (Host)                    |
+|  - Runs on host machine, NOT in container                   |
+|  - Spawns Docker containers for each phase                  |
+|  - Streams output from containers via --attach              |
++-------------------------------------------------------------+
+                              |
+                              v
++-------------------------------------------------------------+
+|              Docker Container (debussy-sandbox)             |
+|  +-------------------------------------------------------+  |
+|  |                Claude CLI Session                     |  |
+|  |  - Isolated execution environment                     |  |
+|  |  - Project mounted at /workspace                      |  |
+|  |  - Network restricted (GitHub, npm, PyPI, Anthropic)  |  |
+|  |  - .venv/.git shadowed with tmpfs                     |  |
+|  +-------------------------------------------------------+  |
++-------------------------------------------------------------+
+                              |
+                              v
++-------------------------------------------------------------+
+|                  Compliance Checker (Host)                  |
+|  - Runs gates on host after container exits                 |
+|  - Verifies work done by sandboxed Claude                   |
 +-------------------------------------------------------------+
 ```
 
