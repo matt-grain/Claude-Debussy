@@ -535,6 +535,9 @@ class DebussyTUI(App):
 
     def write_log(self, message: str) -> None:
         """Add a message to the log panel."""
+        # Skip empty messages (RichLog.write adds newline, so empty = blank line)
+        if not message:
+            return
         log = self.query_one("#log", RichLog)
         # Style tool commands like [Read: file.py] or [ERROR: ...] in italic dim
         # Match pattern: [CapitalizedWord: ...] or indented [ERROR: ...]

@@ -34,6 +34,10 @@ class Config(BaseModel):
         default=False,
         description="Enable LTM learnings - workers save insights via /remember",
     )
+    sandbox_mode: Literal["none", "devcontainer"] = Field(
+        default="none",
+        description="Sandboxing mode: none (direct execution) or devcontainer (Docker isolation)",
+    )
 
     @classmethod
     def load(cls, config_path: Path | None = None) -> Config:

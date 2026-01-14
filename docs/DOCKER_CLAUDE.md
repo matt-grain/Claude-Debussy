@@ -135,6 +135,27 @@ This is now implemented in `ClaudeRunner._build_claude_command()`.
 
 **Fix:** Use `shlex.quote(prompt)` in `ClaudeRunner._build_claude_command()` before joining the docker command string.
 
+### 6. Docker -i Flag Hangs (FIXED)
+
+**Symptoms:**
+- Container starts but never finishes
+- Process hangs indefinitely waiting for input
+- Works when run from Claude's Bash tool but hangs in user's terminal
+
+**Root Cause:** The `-i` (interactive) flag causes Docker to wait for stdin. When launched from certain Windows terminals (PowerShell, Git Bash), stdin isn't properly connected, causing the container to hang.
+
+**Fix:** Use explicit `--attach=stdout --attach=stderr` instead of `-i`, and wrap with `exec` in the shell command. This ensures Docker streams output properly without waiting for stdin, and the shell waits for Docker to complete.
+
+### 7. Windows Terminal Output Buffering (WORKAROUND)
+
+**Symptoms:**
+- Streaming output appears in Claude's Bash tool but not in user's terminal
+- Output only appears after Ctrl+C or process completion
+
+**Root Cause:** Windows terminals have different buffering behavior for asyncio subprocess output.
+
+**Workaround:** Buffer all sandbox output to a temp file (`sandbox_stream.log`) and display it at the end of phase execution using `print(..., flush=True)`.
+
 ## Solutions Summary
 
 | Issue | Status | Solution |
@@ -144,6 +165,8 @@ This is now implemented in `ClaudeRunner._build_claude_command()`.
 | MSYS path conversion | FIXED | Shell command string via `sh -c` |
 | Windows .venv in container | FIXED | tmpfs mounts to shadow host dirs |
 | Prompt shell quoting | FIXED | `shlex.quote()` for prompt in shell string |
+| Docker -i flag hangs | FIXED | `--attach=stdout/stderr` + `exec` wrapper |
+| Windows output buffering | WORKAROUND | Buffer to file + display at end |
 
 ## Docker Image
 

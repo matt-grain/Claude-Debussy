@@ -279,6 +279,41 @@ class ClaudeRunner:
         self._pending_task_ids: dict[str, str] = {}
         self._with_ltm = with_ltm  # Enable LTM learnings in prompts
         self._sandbox_mode = sandbox_mode  # Docker sandbox mode
+        # Sandbox log file for Windows terminal buffering workaround
+        self._sandbox_log_file: TextIO | None = None
+        self._sandbox_log_path: Path | None = None
+
+    def _open_sandbox_log(self) -> None:
+        """Open temp file for sandbox output buffering (Windows workaround)."""
+        if self._sandbox_mode == "devcontainer":
+            # Create temp file in .debussy/logs for easy access
+            self.log_dir.mkdir(parents=True, exist_ok=True)
+            self._sandbox_log_path = self.log_dir / "sandbox_stream.log"
+            self._sandbox_log_file = self._sandbox_log_path.open("w", encoding="utf-8")
+
+    def _close_sandbox_log(self) -> None:
+        """Close sandbox log file."""
+        if self._sandbox_log_file:
+            self._sandbox_log_file.close()
+            self._sandbox_log_file = None
+
+    def _display_sandbox_log(self) -> None:
+        """Display buffered sandbox output (Windows terminal workaround).
+
+        On Windows, asyncio subprocess output doesn't display in real-time in some terminals.
+        This reads the buffered log file and displays it directly to stdout (bypassing callback).
+        """
+        if not self._sandbox_log_path or not self._sandbox_log_path.exists():
+            return
+
+        # Read and display the buffered output
+        content = self._sandbox_log_path.read_text(encoding="utf-8")
+        if content:
+            # Write directly to stdout, bypassing the callback which may have buffering issues
+            print("\n--- Sandbox Output (buffered) ---", flush=True)
+            for line in content.splitlines():
+                print(line, flush=True)
+            print("--- End Sandbox Output ---\n", flush=True)
 
     def _write_output(self, text: str, newline: bool = False) -> None:
         """Write output to terminal/file/callback based on output_mode."""
@@ -336,6 +371,11 @@ class ClaudeRunner:
         if self.output_mode in ("file", "both") and self._current_log_file:
             self._current_log_file.write(output)
             self._current_log_file.flush()
+
+        # For sandbox mode on Windows, also buffer to temp file for deferred display
+        if self._sandbox_mode == "devcontainer" and self._sandbox_log_file:
+            self._sandbox_log_file.write(output)
+            self._sandbox_log_file.flush()
 
     def _open_log_file(self, run_id: str, phase_id: str) -> None:
         """Open a log file for the current phase."""
@@ -418,7 +458,9 @@ class ClaudeRunner:
             docker_args = [
                 "docker run",
                 "--rm",  # Remove container after exit
-                "-i",  # Interactive for stdin streaming
+                # Attach to stdout/stderr to capture output (but NOT stdin to avoid hangs)
+                "--attach=stdout",
+                "--attach=stderr",
                 *volumes,
                 "-w /workspace",
                 *env_vars,
@@ -433,10 +475,11 @@ class ClaudeRunner:
 
             if use_wsl:
                 # Wrap in 'wsl -e sh -c' to avoid Git Bash path mangling
-                return ["wsl", "-e", "sh", "-c", docker_command_str]
+                # Use 'exec' to replace shell with docker so we properly wait for it
+                return ["wsl", "-e", "sh", "-c", f"exec {docker_command_str}"]
             else:
                 # Direct docker execution (non-Windows or native Docker)
-                return ["sh", "-c", docker_command_str]
+                return ["sh", "-c", f"exec {docker_command_str}"]
         else:
             # Direct execution (no sandbox) - prompt passed directly, no shell quoting
             return [self.claude_command, *base_args, "-p", prompt]
@@ -791,7 +834,7 @@ class ClaudeRunner:
         with suppress(Exception):
             await process.wait()
 
-    async def execute_phase(
+    async def execute_phase(  # noqa: PLR0915
         self,
         phase: Phase,
         custom_prompt: str | None = None,
@@ -816,6 +859,9 @@ class ClaudeRunner:
         # Open log file if using file output
         if run_id:
             self._open_log_file(run_id, phase.id)
+
+        # Open sandbox log for Windows buffering workaround
+        self._open_sandbox_log()
 
         start_time = time.time()
         process: asyncio.subprocess.Process | None = None
@@ -854,6 +900,8 @@ class ClaudeRunner:
                 logger.warning(f"Process {process.pid} timed out, killing process tree")
                 await self._kill_process_tree(process)
                 pid_registry.unregister(process.pid)
+                self._close_sandbox_log()
+                self._display_sandbox_log()  # Show partial output on timeout
                 return ExecutionResult(
                     success=False,
                     session_log=f"TIMEOUT after {self.timeout} seconds",
@@ -866,6 +914,7 @@ class ClaudeRunner:
                 logger.info(f"Cancellation requested, killing process tree for PID {process.pid}")
                 await self._kill_process_tree(process)
                 pid_registry.unregister(process.pid)
+                self._close_sandbox_log()
                 self._close_log_file()
                 raise
 
@@ -879,6 +928,10 @@ class ClaudeRunner:
 
             if self.stream_output:
                 self._write_output("\n")  # Newline after streaming output
+
+            # Display buffered sandbox output for Windows terminal workaround
+            self._close_sandbox_log()
+            self._display_sandbox_log()
 
             self._close_log_file()
             return ExecutionResult(

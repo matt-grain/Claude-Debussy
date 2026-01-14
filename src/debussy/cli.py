@@ -2,6 +2,17 @@
 
 from __future__ import annotations
 
+# Force unbuffered output for Windows terminal compatibility
+import os
+import sys
+
+os.environ["PYTHONUNBUFFERED"] = "1"
+# Also force stdout/stderr to flush immediately
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(line_buffering=True)  # type: ignore[union-attr]
+
 import json
 from collections.abc import Callable
 from datetime import datetime
@@ -197,6 +208,20 @@ def run(
             help="Enable LTM learnings: workers save insights via /remember and recall via /recall",
         ),
     ] = False,
+    sandbox: Annotated[
+        bool | None,
+        typer.Option(
+            "--sandbox/--no-sandbox",
+            help="Run Claude in Docker sandbox (requires Docker Desktop)",
+        ),
+    ] = None,
+    accept_risks: Annotated[
+        bool,
+        typer.Option(
+            "--accept-risks",
+            help="Skip security warning when running without sandbox (for CI/scripts)",
+        ),
+    ] = False,
 ) -> None:
     """Start orchestrating a master plan."""
     if dry_run:
@@ -220,6 +245,16 @@ def run(
     # Only override learnings if explicitly set via CLI flag
     if learnings:
         config.learnings = learnings
+    # CLI flag overrides config file for sandbox mode
+    if sandbox is not None:
+        config.sandbox_mode = "devcontainer" if sandbox else "none"
+
+    # Security warning for non-sandboxed mode in non-interactive mode
+    if config.sandbox_mode == "none" and not interactive and not accept_risks:
+        console.print("[bold red]SECURITY WARNING[/bold red]")
+        console.print("Running without sandbox gives Claude FULL ACCESS to your system.")
+        console.print("Use --sandbox to enable Docker isolation, or --accept-risks to proceed.")
+        raise typer.Exit(1)
 
     # Parse plan and display banner (skip for TUI - it has its own header)
     plan = parse_master_plan(master_plan)
@@ -958,6 +993,140 @@ def _dry_run(master_plan: Path) -> None:
     except Exception as e:
         console.print(f"[red]Validation failed: {e}[/red]")
         raise typer.Exit(1) from e
+
+
+# =============================================================================
+# Sandbox Commands
+# =============================================================================
+
+
+def _get_docker_dir() -> Path:
+    """Get the docker directory, checking package data first, then repo root."""
+    # First try: inside package directory (installed package or src layout)
+    pkg_docker = Path(__file__).parent / "docker"
+    if pkg_docker.exists():
+        return pkg_docker
+
+    # Second try: repo root (development mode / editable install)
+    repo_docker = Path(__file__).parent.parent.parent / "docker"
+    if repo_docker.exists():
+        return repo_docker
+
+    # Nothing found - return package path for error message
+    return pkg_docker
+
+
+def _get_docker_command() -> list[str]:
+    """Get the docker command prefix, using WSL on Windows if needed."""
+    import platform
+    import shutil
+
+    if shutil.which("docker"):
+        return ["docker"]
+    # On Windows, try docker through WSL
+    if platform.system() == "Windows" and shutil.which("wsl"):
+        return ["wsl", "docker"]
+    return ["docker"]  # Will fail, but gives clear error
+
+
+def _wsl_path(path: Path) -> str:
+    """Convert Windows path to WSL path format."""
+    import platform
+
+    if platform.system() != "Windows":
+        return str(path)
+    # C:\foo\bar -> /mnt/c/foo/bar
+    path_str = str(path.resolve())
+    if len(path_str) >= 2 and path_str[1] == ":":
+        drive = path_str[0].lower()
+        rest = path_str[2:].replace("\\", "/")
+        return f"/mnt/{drive}{rest}"
+    return str(path)
+
+
+@app.command("sandbox-build")
+def sandbox_build(
+    no_cache: Annotated[
+        bool,
+        typer.Option("--no-cache", help="Build without using Docker cache"),
+    ] = False,
+) -> None:
+    """Build the debussy-sandbox Docker image."""
+    import subprocess
+
+    # Find the Dockerfile
+    docker_dir = _get_docker_dir()
+    dockerfile = docker_dir / "Dockerfile.sandbox"
+
+    if not dockerfile.exists():
+        console.print(f"[red]Dockerfile not found: {dockerfile}[/red]")
+        console.print("Please ensure the docker/ directory is present.")
+        console.print(f"  Checked: {docker_dir}")
+        raise typer.Exit(1)
+
+    console.print("[bold]Building debussy-sandbox image...[/bold]")
+    console.print(f"  Dockerfile: {dockerfile}")
+    if no_cache:
+        console.print("  [dim]--no-cache: rebuilding all layers[/dim]")
+    console.print()
+
+    docker_cmd = _get_docker_command()
+    # If using WSL, convert paths
+    if docker_cmd[0] == "wsl":
+        dockerfile_path = _wsl_path(dockerfile)
+        context_path = _wsl_path(docker_dir)
+    else:
+        dockerfile_path = str(dockerfile)
+        context_path = str(docker_dir)
+
+    build_args = [
+        *docker_cmd,
+        "build",
+        "-t",
+        "debussy-sandbox:latest",
+        "-f",
+        dockerfile_path,
+    ]
+    if no_cache:
+        build_args.append("--no-cache")
+    build_args.append(context_path)
+
+    result = subprocess.run(build_args, check=False)
+
+    if result.returncode == 0:
+        console.print("\n[green]Image built successfully![/green]")
+        console.print("Run with: debussy run --sandbox <master_plan>")
+    else:
+        console.print("\n[red]Build failed[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("sandbox-status")
+def sandbox_status() -> None:
+    """Check Docker and sandbox image availability."""
+    from debussy.runners.claude import (
+        SANDBOX_IMAGE,
+        _is_docker_available,
+        _is_sandbox_image_available,
+    )
+
+    console.print("[bold]Sandbox Status[/bold]\n")
+
+    # Check Docker
+    if _is_docker_available():
+        console.print("[green]Docker:[/green] Available")
+    else:
+        console.print("[red]Docker:[/red] Not available")
+        console.print("  Install Docker Desktop from https://docker.com/products/docker-desktop")
+        return
+
+    # Check sandbox image
+    if _is_sandbox_image_available():
+        console.print(f"[green]Image:[/green] {SANDBOX_IMAGE} found")
+        console.print("\n[green]Ready to run with --sandbox![/green]")
+    else:
+        console.print(f"[yellow]Image:[/yellow] {SANDBOX_IMAGE} not found")
+        console.print("  Build with: debussy sandbox-build")
 
 
 if __name__ == "__main__":

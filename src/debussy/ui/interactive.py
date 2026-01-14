@@ -21,7 +21,8 @@ class NonInteractiveUI:
 
     def __init__(self, console: Console | None = None) -> None:
         """Initialize non-interactive UI."""
-        self.console = console or Console()
+        # Force terminal mode to ensure immediate output (no buffering)
+        self.console = console or Console(force_terminal=True)
         self.context = UIContext()
         self.context.verbose = True
 
@@ -52,7 +53,11 @@ class NonInteractiveUI:
     def log(self, message: str) -> None:
         """Log a message."""
         if self.context.verbose:
-            self.console.print(message)
+            # Write to stderr for debugging Windows terminal issues
+            import sys
+
+            sys.stderr.write(message + "\n")
+            sys.stderr.flush()
 
     # Alias for TUI compatibility
     log_message = log

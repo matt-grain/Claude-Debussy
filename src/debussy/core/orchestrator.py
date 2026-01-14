@@ -55,6 +55,7 @@ class Orchestrator:
             model=self.config.model,
             output_mode=self.config.output,
             with_ltm=self.config.learnings,
+            sandbox_mode=self.config.sandbox_mode,
         )
         self.gates = GateRunner(self.project_root)
         self.checker = ComplianceChecker(
@@ -73,8 +74,9 @@ class Orchestrator:
         )
 
         # Connect UI to ClaudeRunner for log output routing
+        # Always set the callback to route through UI (works for both TUI and NonInteractiveUI)
+        self.claude._output_callback = self.ui.log
         if self.config.interactive:
-            self.claude._output_callback = self.ui.log
             self.claude._token_stats_callback = self._on_token_stats
             self.claude._agent_change_callback = self._on_agent_change
 
