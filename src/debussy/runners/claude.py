@@ -14,10 +14,14 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TextIO
+from typing import TYPE_CHECKING, Literal, TextIO
 
 from debussy.core.models import ComplianceIssue, ExecutionResult, Phase
 from debussy.runners.docker_builder import DockerCommandBuilder
+
+if TYPE_CHECKING:
+    from debussy.runners.context_estimator import ContextEstimator
+
 from debussy.runners.stream_parser import JsonStreamParser, StreamParserCallbacks
 from debussy.utils.docker import (
     get_docker_command,
@@ -229,7 +233,7 @@ class ClaudeRunner:
         timeout: int = 1800,
         claude_command: str = "claude",
         stream_output: bool = True,
-        model: str = "haiku",
+        model: str = "opus",
         output_mode: OutputMode = "terminal",
         log_dir: Path | None = None,
         output_callback: Callable[[str], None] | None = None,
@@ -264,13 +268,20 @@ class ClaudeRunner:
         self._phase_start_time: float | None = None
         # Stream parser for JSON output
         self._parser: JsonStreamParser | None = None
+        # Context estimator for monitoring token usage
+        self._context_estimator: ContextEstimator | None = None
+        self._restart_callback: Callable[[], None] | None = None
+        # Tool use callback for checkpoint progress tracking
+        self._tool_use_callback: Callable[[dict], None] | None = None
+        # Graceful stop flag for context restart
+        self._should_stop: bool = False
 
     def _create_parser(self) -> JsonStreamParser:
         """Create a configured stream parser for the current session."""
         return JsonStreamParser(
             callbacks=StreamParserCallbacks(
                 on_text=self._on_parser_text,
-                on_tool_use=None,  # Tool display is handled internally by parser
+                on_tool_use=self._tool_use_callback,  # For checkpoint progress tracking
                 on_tool_result=None,  # Result display is handled internally by parser
                 on_token_stats=self._token_stats_callback,
                 on_agent_change=self._on_parser_agent_change,
@@ -295,6 +306,7 @@ class ClaudeRunner:
         output: Callable[[str], None] | None = None,
         token_stats: Callable[[TokenStats], None] | None = None,
         agent_change: Callable[[str], None] | None = None,
+        tool_use: Callable[[dict], None] | None = None,
     ) -> None:
         """Configure runtime callbacks for UI integration.
 
@@ -302,6 +314,7 @@ class ClaudeRunner:
             output: Called with each line of Claude output
             token_stats: Called with token usage statistics
             agent_change: Called when active agent changes (Task tool)
+            tool_use: Called when a tool is invoked (receives tool_use content block)
         """
         if output is not None:
             self._output_callback = output
@@ -309,6 +322,42 @@ class ClaudeRunner:
             self._token_stats_callback = token_stats
         if agent_change is not None:
             self._agent_change_callback = agent_change
+        if tool_use is not None:
+            self._tool_use_callback = tool_use
+
+    def set_context_estimator(self, estimator: ContextEstimator) -> None:
+        """Configure context estimator for token usage monitoring.
+
+        Args:
+            estimator: The ContextEstimator instance to use
+        """
+        self._context_estimator = estimator
+
+    def set_restart_callback(self, callback: Callable[[], None]) -> None:
+        """Configure callback to invoke when context threshold is reached.
+
+        Args:
+            callback: Called when should_restart() returns True
+        """
+        self._restart_callback = callback
+
+    def request_stop(self) -> None:
+        """Request graceful termination of the current session.
+
+        Sets a flag that causes the stream processing loop to terminate
+        after completing the current tool operation. This allows for
+        a clean restart when context limits are reached.
+        """
+        logger.info("Graceful stop requested")
+        self._should_stop = True
+
+    def is_stop_requested(self) -> bool:
+        """Check if graceful stop was requested.
+
+        Returns:
+            True if stop was requested via request_stop()
+        """
+        return self._should_stop
 
     def _open_sandbox_log(self) -> None:
         """Open temp file for sandbox output buffering (Windows workaround)."""
@@ -526,15 +575,25 @@ class ClaudeRunner:
         self,
         stream: asyncio.StreamReader,
         output_list: list[str],
-    ) -> str:
+    ) -> tuple[str, bool]:
         """Read JSON stream and display content in real-time.
 
-        Returns the full text content for the session log.
+        Returns:
+            Tuple of (full_text_content, was_stopped)
+            - full_text_content: The session log text
+            - was_stopped: True if graceful stop was triggered
         """
         # Create parser for this session
         self._parser = self._create_parser()
+        was_stopped = False
 
         while True:
+            # Check for graceful stop request
+            if self._should_stop:
+                logger.info("Graceful stop: terminating stream read")
+                was_stopped = True
+                break
+
             line = await stream.readline()
             if not line:
                 break
@@ -548,7 +607,7 @@ class ClaudeRunner:
             # Parser handles JSON parsing and emits callbacks
             self._parser.parse_line(decoded)
 
-        return self._parser.get_full_text()
+        return self._parser.get_full_text(), was_stopped
 
     def _display_stream_event(self, event: dict, full_text: list[str]) -> None:
         """Display a streaming event and collect text content."""
@@ -709,6 +768,20 @@ class ClaudeRunner:
         """Display abbreviated tool result."""
         tool_use_id = content.get("tool_use_id", "")
         result_content = content.get("content", "")
+        tool_name = content.get("tool_name", "")
+
+        # Track tool output with context estimator
+        if self._context_estimator and result_text:
+            if tool_name == "Read":
+                # Track file content reads separately
+                self._context_estimator.add_file_read(result_text)
+            else:
+                # Track all other tool outputs
+                self._context_estimator.add_tool_output(result_text)
+
+            # Check if we should restart
+            if self._context_estimator.should_restart() and self._restart_callback:
+                self._restart_callback()
 
         # Check if this is a Task tool result
         if tool_use_id in self._pending_task_ids:
@@ -852,13 +925,21 @@ class ClaudeRunner:
             run_id: Optional run ID for log file naming
 
         Returns:
-            ExecutionResult with success status and session log
+            ExecutionResult with success status and session log.
+            If stop was requested (context limit), success=False and
+            session_log starts with "CONTEXT_LIMIT_RESTART".
         """
         prompt = custom_prompt or self._build_phase_prompt(phase, with_ltm=self._with_ltm)
 
-        # Reset agent tracking at start of each phase
+        # Reset agent tracking and stop flag at start of each phase
         self._reset_active_agent("Debussy")
         self._pending_task_ids.clear()
+        self._should_stop = False
+
+        # Reset context estimator for fresh session
+        if self._context_estimator:
+            self._context_estimator.reset()
+            self._context_estimator.add_prompt(prompt)
 
         # Open log file if using file output
         if run_id:
@@ -884,19 +965,46 @@ class ClaudeRunner:
 
             raw_output: list[str] = []
             stderr_lines: list[str] = []
+            was_stopped = False
 
             try:
                 if process.stdout is None or process.stderr is None:
                     raise RuntimeError("Subprocess streams not initialized. This is a bug - please report it.")
 
                 # Stream stdout (JSON) and stderr concurrently
-                await asyncio.wait_for(
+                # Note: _stream_json_reader returns (text, was_stopped) tuple
+                results = await asyncio.wait_for(
                     asyncio.gather(
                         self._stream_json_reader(process.stdout, raw_output),
                         self._stream_stderr(process.stderr, stderr_lines),
                     ),
                     timeout=self.timeout,
                 )
+                # Extract was_stopped from the tuple result
+                _, was_stopped = results[0]  # First result is from _stream_json_reader
+
+                if was_stopped:
+                    # Graceful stop requested - kill process and return special result
+                    logger.info(f"Graceful stop: killing process {process.pid}")
+                    await self._kill_process_tree(process)
+                    pid_registry.unregister(process.pid)
+                    self._close_sandbox_log()
+                    self._display_sandbox_log()
+
+                    session_log = "".join(raw_output)
+                    if stderr_lines:
+                        session_log += f"\n\nSTDERR:\n{''.join(stderr_lines)}"
+
+                    # Use special marker for context limit restart
+                    self._close_log_file(success=False)
+                    return ExecutionResult(
+                        success=False,
+                        session_log=f"CONTEXT_LIMIT_RESTART\n{session_log}",
+                        exit_code=-2,  # Special exit code for context restart
+                        duration_seconds=time.time() - start_time,
+                        pid=process.pid,
+                    )
+
                 await process.wait()
             except TimeoutError:
                 logger.warning(f"Process {process.pid} timed out, killing process tree")

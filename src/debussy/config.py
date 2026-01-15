@@ -19,11 +19,17 @@ class NotificationConfig(BaseModel):
 
 
 class Config(BaseModel):
-    """Debussy configuration."""
+    """Debussy configuration.
+
+    Auto-commit settings:
+        auto_commit: Whether to commit at phase boundaries (default: True)
+        commit_on_failure: Whether to commit even if phase fails (default: False)
+        commit_message_template: Template for commit messages using {phase_id}, {phase_name}, {status}
+    """
 
     timeout: int = Field(default=1800, description="Phase timeout in seconds (default: 30 min)")
     max_retries: int = Field(default=2, description="Max retry attempts per phase")
-    model: str = Field(default="haiku", description="Claude model to use (haiku, sonnet, opus)")
+    model: str = Field(default="opus", description="Claude model to use (haiku, sonnet, opus)")
     output: Literal["terminal", "file", "both"] = Field(default="terminal", description="Output mode: terminal, file, or both")
     interactive: bool = Field(default=True, description="Interactive mode with dashboard UI")
     notifications: NotificationConfig = Field(default_factory=NotificationConfig)
@@ -35,6 +41,30 @@ class Config(BaseModel):
     sandbox_mode: Literal["none", "devcontainer"] = Field(
         default="none",
         description="Sandboxing mode: none (direct execution) or devcontainer (Docker isolation)",
+    )
+    auto_commit: bool = Field(
+        default=True,
+        description="Commit at phase boundaries for clean checkpoints",
+    )
+    commit_on_failure: bool = Field(
+        default=False,
+        description="Commit even if phase fails (default: only commit successful phases)",
+    )
+    commit_message_template: str = Field(
+        default="Debussy: Phase {phase_id} - {phase_name} {status}",
+        description="Template for commit messages; supports {phase_id}, {phase_name}, {status}",
+    )
+    context_threshold: float = Field(
+        default=80.0,
+        description="Percentage of context window to trigger restart (0-100). Set to 100 to disable.",
+    )
+    tool_call_threshold: int = Field(
+        default=100,
+        description="Fallback: restart after this many tool calls if token threshold not reached.",
+    )
+    max_restarts: int = Field(
+        default=3,
+        description="Maximum restart attempts per phase before failing. Set to 0 to disable restarts.",
     )
 
     @classmethod

@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from debussy.config import Config, get_orchestrator_dir
+from debussy.core.checkpoint import CheckpointManager
 from debussy.core.compliance import ComplianceChecker
 from debussy.core.models import (
+    ExecutionResult,
     MasterPlan,
     Phase,
     PhaseStatus,
@@ -23,11 +27,14 @@ from debussy.parsers.learnings import extract_learnings
 from debussy.parsers.master import parse_master_plan
 from debussy.parsers.phase import parse_phase
 from debussy.runners.claude import ClaudeRunner, TokenStats
+from debussy.runners.context_estimator import ContextEstimator
 from debussy.runners.gates import GateRunner
 from debussy.ui import NonInteractiveUI, OrchestratorUI, TextualUI, UIState, UserAction
 
 if TYPE_CHECKING:
     from debussy.core.models import ComplianceIssue
+
+logger = logging.getLogger(__name__)
 
 
 class Orchestrator:
@@ -66,6 +73,9 @@ class Orchestrator:
         else:
             self.notifier = notifier
 
+        # Initialize checkpoint manager for progress tracking
+        self.checkpoint_manager = CheckpointManager(self.project_root)
+
         # Initialize UI based on config
         self.ui: OrchestratorUI = TextualUI() if self.config.interactive else NonInteractiveUI()
 
@@ -74,6 +84,7 @@ class Orchestrator:
             output=self.ui.log,
             token_stats=self._on_token_stats if self.config.interactive else None,
             agent_change=self._on_agent_change if self.config.interactive else None,
+            tool_use=self._on_tool_use,
         )
 
         # Parse master plan
@@ -92,6 +103,28 @@ class Orchestrator:
     def _on_agent_change(self, agent: str) -> None:
         """Handle agent change from Claude runner."""
         self.ui.set_active_agent(agent)
+
+    def _on_tool_use(self, tool_content: dict) -> None:
+        """Handle tool use events from Claude runner.
+
+        Detects /debussy-progress skill invocations and records progress
+        to the checkpoint manager.
+
+        Args:
+            tool_content: The tool_use content block from Claude's stream
+        """
+        tool_name = tool_content.get("name", "")
+        tool_input = tool_content.get("input", {})
+
+        # Check for Skill tool with debussy-progress skill
+        if tool_name == "Skill":
+            skill_name = tool_input.get("skill", "")
+            if skill_name == "debussy-progress":
+                # Extract progress message from args
+                args = tool_input.get("args", "")
+                if args:
+                    self.checkpoint_manager.record_progress(args)
+                    logger.debug(f"Checkpoint: recorded progress from skill: {args}")
 
     def _create_notifier(self) -> Notifier:
         """Create notifier based on configuration."""
@@ -313,6 +346,112 @@ class Orchestrator:
         }
         self.ui.show_status_popup(details)
 
+    async def _execute_phase_internal(
+        self,
+        run_id: str,
+        phase: Phase,
+        prompt: str | None,
+        is_remediation: bool,
+    ) -> ExecutionResult:
+        """Execute a phase with automatic restart on context limit.
+
+        Implements the smart restart loop that monitors context usage and
+        restarts the phase when limits are approached. Uses checkpoint
+        context to help Claude continue from where it left off.
+
+        Args:
+            run_id: The current run ID
+            phase: The phase to execute
+            prompt: Custom prompt (for remediation) or None
+            is_remediation: Whether this is a remediation attempt
+
+        Returns:
+            ExecutionResult from the phase execution
+        """
+        restart_count = 0
+        max_restarts = self.config.max_restarts
+        effective_prompt = prompt
+        restart_context: str | None = None
+
+        # Skip restart logic if disabled (threshold >= 100 or max_restarts == 0)
+        # Also skip for remediation runs (they have their own retry logic)
+        restart_enabled = self.config.context_threshold < 100.0 and max_restarts > 0 and not is_remediation
+
+        while True:
+            # Setup context estimator for this attempt
+            if restart_enabled:
+                estimator = ContextEstimator(
+                    threshold_percent=int(self.config.context_threshold),
+                    tool_call_threshold=self.config.tool_call_threshold,
+                )
+
+                # Create restart callback that requests graceful stop
+                def on_context_limit() -> None:
+                    logger.warning("Context limit reached, requesting graceful stop")
+                    self.ui.log_raw("[yellow]Context limit approaching - preparing to restart[/yellow]")
+                    self.claude.request_stop()
+
+                self.claude.set_context_estimator(estimator)
+                self.claude.set_restart_callback(on_context_limit)
+            else:
+                self.claude.set_context_estimator(None)  # type: ignore[arg-type]
+                self.claude.set_restart_callback(None)  # type: ignore[arg-type]
+
+            # Build prompt with optional restart context
+            final_prompt = effective_prompt
+            if restart_context:
+                # Prepend restart context to the prompt
+                if effective_prompt:
+                    final_prompt = f"{restart_context}\n\n---\n\n{effective_prompt}"
+                else:
+                    # Build phase prompt and prepend context
+                    original_prompt = self.claude._build_phase_prompt(phase, with_ltm=self.config.learnings)
+                    final_prompt = f"{restart_context}\n\n---\n\n{original_prompt}"
+                logger.info(f"Injecting restart context (attempt {restart_count + 1})")
+
+            # Execute the phase
+            result = await self.claude.execute_phase(phase, final_prompt, run_id=run_id)
+
+            # Check if this was a context limit restart
+            if result.session_log.startswith("CONTEXT_LIMIT_RESTART") and restart_enabled:
+                if restart_count >= max_restarts:
+                    # Max restarts exceeded - fail the phase
+                    logger.error(f"Max restarts ({max_restarts}) exceeded for phase {phase.id}")
+                    self.ui.log_raw(f"[red]Phase {phase.id} failed: max restarts ({max_restarts}) exceeded[/red]")
+                    self.notifier.error(
+                        f"Phase {phase.id} Failed",
+                        f"Max restarts ({max_restarts}) exceeded - phase may be too complex",
+                    )
+                    # Return a failure result
+                    return ExecutionResult(
+                        success=False,
+                        session_log=f"Max restarts ({max_restarts}) exceeded",
+                        exit_code=-3,
+                        duration_seconds=0,
+                        pid=result.pid,
+                    )
+
+                # Prepare for restart
+                restart_count += 1
+                logger.warning(f"Restarting phase {phase.id} (attempt {restart_count}/{max_restarts})")
+                self.ui.log_raw(f"[yellow]Restarting phase (attempt {restart_count}/{max_restarts})...[/yellow]")
+
+                # Auto-commit before restart
+                self._auto_commit_phase(phase, success=False)
+
+                # Prepare restart context from checkpoint
+                restart_context = self.checkpoint_manager.prepare_restart()
+
+                self.notifier.warning(
+                    f"Phase {phase.id} Restarting",
+                    f"Context limit reached, attempt {restart_count}/{max_restarts}",
+                )
+
+                continue  # Restart the loop
+
+            # Normal completion (success or failure)
+            return result
+
     async def _execute_phase_with_compliance(
         self,
         run_id: str,
@@ -327,6 +466,9 @@ class Orchestrator:
         is_remediation = False
         previous_issues: list[ComplianceIssue] = []
 
+        # Start checkpoint for this phase
+        self.checkpoint_manager.start_phase(phase.id, phase.title)
+
         for attempt in range(1, max_attempts + 1):
             # Create execution record
             self.state.create_phase_execution(run_id, phase.id, attempt)
@@ -340,8 +482,8 @@ class Orchestrator:
             # Build prompt (normal or remediation)
             prompt = self.claude.build_remediation_prompt(phase, previous_issues, with_ltm=self.config.learnings) if is_remediation else None
 
-            # Spawn Claude worker
-            result = await self.claude.execute_phase(phase, prompt, run_id=run_id)
+            # Spawn Claude worker (with restart logic for non-remediation runs)
+            result = await self._execute_phase_internal(run_id, phase, prompt, is_remediation)
 
             if not result.success:
                 self.state.update_phase_status(
@@ -382,6 +524,8 @@ class Orchestrator:
                 # Save learnings to LTM if enabled
                 if self.config.learnings:
                     self._save_learnings_to_ltm(phase)
+                # Auto-commit at phase boundary
+                self._auto_commit_phase(phase, success=True)
                 return True
 
             # Handle non-compliance
@@ -399,6 +543,8 @@ class Orchestrator:
                     # Save learnings to LTM if enabled (even with warnings)
                     if self.config.learnings:
                         self._save_learnings_to_ltm(phase)
+                    # Auto-commit at phase boundary (success with warnings)
+                    self._auto_commit_phase(phase, success=True)
                     return True
 
                 case RemediationStrategy.TARGETED_FIX | RemediationStrategy.FULL_RETRY:
@@ -436,6 +582,8 @@ class Orchestrator:
             f"Phase {phase.id} Failed",
             f"Max attempts ({max_attempts}) reached",
         )
+        # Auto-commit at phase boundary (failure - respects commit_on_failure setting)
+        self._auto_commit_phase(phase, success=False)
         return False
 
     def _save_learnings_to_ltm(self, phase: Phase) -> None:
@@ -470,6 +618,155 @@ class Orchestrator:
                     cwd=self.project_root,
                     timeout=10,
                 )
+
+    def _auto_commit_phase(self, phase: Phase, success: bool) -> None:
+        """Auto-commit changes at phase boundary.
+
+        Args:
+            phase: The phase that completed
+            success: Whether the phase completed successfully
+        """
+        # Check if auto-commit is enabled
+        if not self.config.auto_commit:
+            logger.debug("Auto-commit disabled, skipping commit")
+            return
+
+        # Skip commit on failure unless commit_on_failure is enabled
+        if not success and not self.config.commit_on_failure:
+            logger.debug("Phase failed and commit_on_failure=False, skipping commit")
+            return
+
+        # Check for changes using git status
+        has_changes = self._git_has_changes()
+        if has_changes is None:
+            return  # Git error occurred
+        if not has_changes:
+            logger.debug("No changes to commit, skipping")
+            self.ui.log_raw("[dim]No changes to commit[/dim]")
+            return
+
+        # Format and execute commit
+        self._execute_git_commit(phase, success)
+
+    def _git_has_changes(self) -> bool | None:
+        """Check if there are uncommitted changes.
+
+        Returns:
+            True if there are changes, False if clean, None on error.
+        """
+        try:
+            result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                capture_output=True,
+                text=True,
+                cwd=self.project_root,
+                timeout=10,
+                check=False,
+            )
+            if result.returncode != 0:
+                logger.warning(f"Git status failed: {result.stderr}")
+                return None
+            return bool(result.stdout.strip())
+        except FileNotFoundError:
+            logger.warning("Git not found, skipping auto-commit")
+            return None
+        except subprocess.TimeoutExpired:
+            logger.warning("Git status timed out, skipping auto-commit")
+            return None
+
+    def _execute_git_commit(self, phase: Phase, success: bool) -> None:
+        """Execute git add and commit for a phase.
+
+        Args:
+            phase: The phase that completed
+            success: Whether the phase completed successfully
+        """
+        # Format commit message using template
+        status_icon = "✓" if success else "⚠️"
+        message = self.config.commit_message_template.format(
+            phase_id=phase.id,
+            phase_name=phase.title,
+            status=status_icon,
+        )
+
+        # Get model name for Co-Authored-By
+        model_name = self.config.model.capitalize()
+        co_author = f"Co-Authored-By: Claude {model_name} <noreply@anthropic.com>"
+
+        full_message = f"{message}\n\n{co_author}"
+
+        # Stage all changes and commit
+        try:
+            # Stage all changes
+            add_result = subprocess.run(
+                ["git", "add", "-A"],
+                capture_output=True,
+                text=True,
+                cwd=self.project_root,
+                timeout=30,
+                check=False,
+            )
+            if add_result.returncode != 0:
+                logger.warning(f"Git add failed: {add_result.stderr}")
+                return
+
+            # Commit with message
+            commit_result = subprocess.run(
+                ["git", "commit", "-m", full_message],
+                capture_output=True,
+                text=True,
+                cwd=self.project_root,
+                timeout=30,
+                check=False,
+            )
+            if commit_result.returncode != 0:
+                # Check if it's just "nothing to commit"
+                if "nothing to commit" in commit_result.stdout.lower():
+                    logger.debug("Nothing to commit after staging")
+                    return
+                logger.warning(f"Git commit failed: {commit_result.stderr}")
+                self.ui.log_raw(f"[yellow]Auto-commit failed: {commit_result.stderr.strip()}[/yellow]")
+                return
+
+            logger.info(f"Auto-commit successful: {message}")
+            self.ui.log_raw(f"[green]Auto-commit: {message}[/green]")
+
+        except FileNotFoundError:
+            logger.warning("Git not found, skipping auto-commit")
+        except subprocess.TimeoutExpired:
+            logger.warning("Git command timed out during auto-commit")
+            self.ui.log_raw("[yellow]Auto-commit timed out[/yellow]")
+
+    def check_clean_working_directory(self) -> tuple[bool, int]:
+        """Check if the working directory is clean (no uncommitted changes).
+
+        Returns:
+            Tuple of (is_clean, uncommitted_file_count)
+        """
+        try:
+            result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                capture_output=True,
+                text=True,
+                cwd=self.project_root,
+                timeout=10,
+                check=False,
+            )
+            if result.returncode != 0:
+                # Git not available or not a repo - consider clean
+                logger.debug(f"Git status failed: {result.stderr}")
+                return (True, 0)
+
+            # Count uncommitted files
+            lines = [line for line in result.stdout.strip().split("\n") if line]
+            return (len(lines) == 0, len(lines))
+
+        except FileNotFoundError:
+            # Git not installed - consider clean
+            return (True, 0)
+        except subprocess.TimeoutExpired:
+            # Timeout - consider clean to avoid blocking
+            return (True, 0)
 
     def _dependencies_met(self, phase: Phase) -> bool:
         """Check if all dependencies are met for a phase."""

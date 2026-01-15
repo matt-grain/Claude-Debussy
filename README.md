@@ -167,17 +167,22 @@ Start orchestrating a master plan.
 debussy run <master-plan.md> [options]
 
 Options:
-  --dry-run, -n       Parse and validate only, don't execute
-  --phase, -p         Start from specific phase ID
-  --resume, -r        Resume previous run, skip completed phases
-  --restart           Start fresh, ignore previous progress
-  --model, -m         Claude model: haiku, sonnet, opus (default: sonnet)
-  --output, -o        Output mode: terminal, file, both (default: terminal)
-  --no-interactive    YOLO mode: disable interactive dashboard (for CI)
-  --yolo              Alias for --no-interactive
-  --sandbox           Run Claude workers in Docker containers (isolated)
-  --no-sandbox        Run Claude workers directly on host (default)
-  --accept-risks      Skip security warning in non-interactive mode without sandbox
+  --dry-run, -n        Parse and validate only, don't execute
+  --phase, -p          Start from specific phase ID
+  --resume, -r         Resume previous run, skip completed phases
+  --restart            Start fresh, ignore previous progress
+  --model, -m          Claude model: haiku, sonnet, opus (default: sonnet)
+  --output, -o         Output mode: terminal, file, both (default: terminal)
+  --no-interactive     YOLO mode: disable interactive dashboard (for CI)
+  --yolo               Alias for --no-interactive
+  --sandbox            Run Claude workers in Docker containers (isolated)
+  --no-sandbox         Run Claude workers directly on host (default)
+  --accept-risks       Skip security warning in non-interactive mode without sandbox
+  --auto-commit        Commit changes at phase boundaries (default)
+  --no-auto-commit     Disable auto-commit at phase boundaries
+  --allow-dirty        Allow starting with uncommitted changes
+  --context-threshold  Context usage % to trigger restart (0-100, default: 80)
+  --max-restarts       Max restart attempts per phase (default: 3, 0 to disable)
 ```
 
 ### `debussy status`
@@ -262,6 +267,15 @@ output: terminal       # Output mode: terminal, file, both
 interactive: true      # Interactive dashboard (default: true)
 strict_compliance: true
 sandbox_mode: none     # none (direct) or devcontainer (Docker)
+
+# Auto-commit at phase boundaries
+auto_commit: true      # Commit after each phase (default: true)
+commit_on_failure: false  # Also commit failed phases (default: false)
+
+# Context monitoring (smart restart when approaching context limits)
+context_threshold: 80.0   # Restart when estimated usage hits 80% (set to 100 to disable)
+tool_call_threshold: 100  # Fallback: restart after 100 tool calls
+max_restarts: 3           # Give up after 3 restart attempts (set to 0 to disable)
 
 notifications:
   enabled: true

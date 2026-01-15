@@ -189,7 +189,7 @@ def run(
     model: Annotated[
         str,
         typer.Option("--model", "-m", help="Claude model: haiku, sonnet, opus"),
-    ] = "haiku",
+    ] = "opus",
     output: Annotated[
         str,
         typer.Option("--output", "-o", help="Output mode: terminal, file, both"),
@@ -224,6 +224,34 @@ def run(
             help="Skip security warning when running without sandbox (for CI/scripts)",
         ),
     ] = False,
+    auto_commit: Annotated[
+        bool | None,
+        typer.Option(
+            "--auto-commit/--no-auto-commit",
+            help="Commit changes at phase boundaries (default: True)",
+        ),
+    ] = None,
+    allow_dirty: Annotated[
+        bool,
+        typer.Option(
+            "--allow-dirty",
+            help="Allow starting with uncommitted changes in working directory",
+        ),
+    ] = False,
+    context_threshold: Annotated[
+        float | None,
+        typer.Option(
+            "--context-threshold",
+            help="Context usage percentage (0-100) to trigger restart. Set to 100 to disable. Default: 80",
+        ),
+    ] = None,
+    max_restarts: Annotated[
+        int | None,
+        typer.Option(
+            "--max-restarts",
+            help="Maximum restart attempts per phase. Set to 0 to disable. Default: 3",
+        ),
+    ] = None,
 ) -> None:
     """Start orchestrating a master plan."""
     if dry_run:
@@ -269,6 +297,14 @@ def run(
     # CLI flag overrides config file for sandbox mode
     if sandbox is not None:
         config.sandbox_mode = "devcontainer" if sandbox else "none"
+    # CLI flag overrides config for auto-commit
+    if auto_commit is not None:
+        config.auto_commit = auto_commit
+    # CLI flags override config for context restart settings
+    if context_threshold is not None:
+        config.context_threshold = context_threshold
+    if max_restarts is not None:
+        config.max_restarts = max_restarts
 
     # Security warning for non-sandboxed mode
     if config.sandbox_mode == "none" and not accept_risks:
@@ -293,6 +329,32 @@ def run(
             confirm = typer.confirm("Do you want to proceed without sandbox?", default=False)
             if not confirm:
                 console.print("[yellow]Aborted. Use --sandbox for safer execution.[/yellow]")
+                raise typer.Exit(0)
+
+    # Check for dirty working directory (if auto-commit enabled and not --allow-dirty)
+    if config.auto_commit and not allow_dirty:
+        from debussy.core.orchestrator import Orchestrator
+
+        # Create a temporary orchestrator just to check the directory
+        temp_orchestrator = Orchestrator(master_plan, config, project_root=Path.cwd())
+        is_clean, file_count = temp_orchestrator.check_clean_working_directory()
+        if not is_clean:
+            console.print()
+            console.print("[bold yellow]⚠️  DIRTY WORKING DIRECTORY[/bold yellow]")
+            console.print()
+            console.print(f"Found {file_count} uncommitted file(s) in working directory.")
+            console.print("Auto-commit is enabled, which may commit these changes.")
+            console.print()
+            console.print("[bold]Options:[/bold]")
+            console.print("  1. Commit or stash your changes first")
+            console.print("  2. Use --allow-dirty to proceed anyway")
+            console.print("  3. Use --no-auto-commit to disable auto-commit")
+            console.print()
+            if not interactive:
+                raise typer.Exit(1)
+            confirm = typer.confirm("Proceed with uncommitted changes?", default=False)
+            if not confirm:
+                console.print("[yellow]Aborted. Please commit or stash your changes.[/yellow]")
                 raise typer.Exit(0)
 
     # Parse plan and display banner (skip for TUI - it has its own header)
