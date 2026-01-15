@@ -196,6 +196,11 @@ class Orchestrator:
                 phases_to_run = phases_to_run[start_idx:]
 
             for idx, phase in enumerate(phases_to_run, 1):
+                # Skip phases already marked completed in the plan file
+                if phase.status == PhaseStatus.COMPLETED:
+                    self.ui.log_message(f"[dim]Skipping phase {phase.id}: already marked completed in plan[/dim]")
+                    continue
+
                 # Skip phases that were already completed in a previous run
                 if skip_phases and phase.id in skip_phases:
                     self.ui.log_message(f"[dim]Skipping completed phase {phase.id}: {phase.title}[/dim]")

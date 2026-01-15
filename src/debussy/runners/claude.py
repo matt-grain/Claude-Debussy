@@ -283,6 +283,9 @@ class ClaudeRunner:
         # Sandbox log file for Windows terminal buffering workaround
         self._sandbox_log_file: TextIO | None = None
         self._sandbox_log_path: Path | None = None
+        # Track current phase for completion banner
+        self._current_phase_id: str | None = None
+        self._phase_start_time: float | None = None
 
     def _open_sandbox_log(self) -> None:
         """Open temp file for sandbox output buffering (Windows workaround)."""
@@ -385,6 +388,10 @@ class ClaudeRunner:
         - run_{run_id}_phase_{phase_id}.log - Human-readable formatted output
         - run_{run_id}_phase_{phase_id}.jsonl - Raw JSONL stream (for debugging)
         """
+        # Track phase info for completion banner
+        self._current_phase_id = phase_id
+        self._phase_start_time = time.time()
+
         if self.output_mode in ("file", "both"):
             self.log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -400,14 +407,44 @@ class ClaudeRunner:
             jsonl_path = self.log_dir / f"run_{run_id}_phase_{phase_id}.jsonl"
             self._current_jsonl_file = jsonl_path.open("w", encoding="utf-8")
 
-    def _close_log_file(self) -> None:
-        """Close both log files (human-readable and JSONL)."""
+    def _write_completion_banner(self, success: bool, duration: float | None = None) -> None:
+        """Write phase completion banner to log file."""
+        if not self._current_log_file:
+            return
+
+        phase_id = self._current_phase_id or "?"
+        if duration is None and self._phase_start_time:
+            duration = time.time() - self._phase_start_time
+
+        status = "COMPLETED" if success else "FAILED"
+        duration_str = f"{duration:.1f}s" if duration else "?"
+
+        banner = f"""
+{"=" * 60}
+{"✓" if success else "✗"} PHASE {phase_id} {status}
+  Duration: {duration_str}
+{"=" * 60}
+"""
+        self._current_log_file.write(banner)
+        self._current_log_file.flush()
+
+    def _close_log_file(self, success: bool | None = None) -> None:
+        """Close both log files (human-readable and JSONL).
+
+        Args:
+            success: If provided, writes a completion banner before closing.
+        """
         if self._current_log_file:
+            if success is not None:
+                self._write_completion_banner(success)
             self._current_log_file.close()
             self._current_log_file = None
         if self._current_jsonl_file:
             self._current_jsonl_file.close()
             self._current_jsonl_file = None
+        # Reset phase tracking
+        self._current_phase_id = None
+        self._phase_start_time = None
 
     def _build_claude_command(self, prompt: str) -> list[str]:
         """Build Claude CLI command, optionally wrapped in Docker.
@@ -931,7 +968,7 @@ class ClaudeRunner:
                 await self._kill_process_tree(process)
                 pid_registry.unregister(process.pid)
                 self._close_sandbox_log()
-                self._close_log_file()
+                self._close_log_file(success=False)  # User cancelled = failed
                 raise
 
             # Process completed normally - unregister from safety registry
@@ -949,9 +986,10 @@ class ClaudeRunner:
             self._close_sandbox_log()
             self._display_sandbox_log()
 
-            self._close_log_file()
+            phase_success = process.returncode == 0
+            self._close_log_file(success=phase_success)
             return ExecutionResult(
-                success=process.returncode == 0,
+                success=phase_success,
                 session_log=session_log,
                 exit_code=process.returncode or 0,
                 duration_seconds=time.time() - start_time,
@@ -959,7 +997,7 @@ class ClaudeRunner:
             )
 
         except FileNotFoundError:
-            self._close_log_file()
+            self._close_log_file(success=False)
             return ExecutionResult(
                 success=False,
                 session_log=f"Claude CLI not found: {self.claude_command}",
@@ -973,7 +1011,7 @@ class ClaudeRunner:
                 logger.warning(f"Exception during execution, cleaning up PID {process.pid}")
                 await self._kill_process_tree(process)
                 pid_registry.unregister(process.pid)
-            self._close_log_file()
+            self._close_log_file(success=False)
             return ExecutionResult(
                 success=False,
                 session_log=f"Error spawning Claude: {e}",

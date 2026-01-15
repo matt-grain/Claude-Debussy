@@ -694,6 +694,124 @@ def plan_init(
 
 
 @app.command()
+def convert(
+    source: Annotated[
+        Path,
+        typer.Argument(
+            help="Path to freeform plan markdown file",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            resolve_path=True,
+        ),
+    ],
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Output directory for structured plan"),
+    ] = None,
+    interactive: Annotated[
+        bool,
+        typer.Option("--interactive", "-i", help="Ask clarifying questions"),
+    ] = False,
+    model: Annotated[
+        str,
+        typer.Option("--model", "-m", help="Claude model to use"),
+    ] = "haiku",
+    max_retries: Annotated[
+        int,
+        typer.Option("--max-retries", help="Max conversion attempts"),
+    ] = 3,
+    force: Annotated[
+        bool,
+        typer.Option("--force", "-f", help="Overwrite existing output directory"),
+    ] = False,
+) -> None:
+    """Convert a freeform plan to Debussy format.
+
+    Uses Claude to transform an unstructured plan markdown file into
+    Debussy's structured format with master plan and phase files.
+
+    The converted output is validated with audit. If audit fails,
+    the conversion retries with feedback up to --max-retries times.
+
+    Example:
+        debussy convert my-plan.md --output plans/my-feature/
+        debussy convert messy-plan.md --interactive
+    """
+    from debussy.converters import PlanConverter
+    from debussy.core.auditor import PlanAuditor
+    from debussy.templates import TEMPLATES_DIR
+
+    # Determine output directory
+    if output is None:
+        # Default to same directory as source, with structured- prefix
+        output = source.parent / f"structured-{source.stem}"
+
+    # Check if output exists
+    if output.exists() and not force:
+        console.print(f"[red]Error:[/red] Output directory already exists: {output}")
+        console.print("Use --force to overwrite")
+        raise typer.Exit(1)
+
+    console.print(f"\n[bold]Converting:[/bold] {source.name}\n")
+
+    # Create converter
+    auditor = PlanAuditor()
+    converter = PlanConverter(
+        auditor=auditor,
+        templates_dir=TEMPLATES_DIR,
+        max_iterations=max_retries,
+        model=model,
+    )
+
+    # Run conversion with progress display
+    console.print("Analyzing plan structure...")
+
+    result = converter.convert(
+        source_plan=source,
+        output_dir=output,
+        interactive=interactive,
+    )
+
+    # Display results
+    if result.files_created:
+        console.print()
+        for file_path in result.files_created:
+            # Try to get relative path
+            try:
+                rel_path = Path(file_path).relative_to(Path.cwd())
+            except ValueError:
+                rel_path = Path(file_path)
+            console.print(f"  [green]✓[/green] Created: {rel_path}")
+        console.print()
+
+    # Display audit result
+    if result.audit_passed:
+        console.print("[green]✓ Audit passed![/green]")
+    else:
+        console.print(f"[red]✗ Audit failed[/red] ({result.audit_errors} errors, {result.audit_warnings} warnings)")
+
+    # Display warnings
+    for warning in result.warnings:
+        console.print(f"[yellow]⚠ {warning}[/yellow]")
+
+    if result.success:
+        console.print(f"\n[bold green]Conversion complete![/bold green] (attempt {result.iterations}/{max_retries})\n")
+        console.print("[bold]Next steps:[/bold]")
+        master_plan = output / "MASTER_PLAN.md"
+        try:
+            display_path = master_plan.relative_to(Path.cwd())
+        except ValueError:
+            display_path = master_plan
+        console.print("1. Review generated files for accuracy")
+        console.print(f"2. Run: [cyan]debussy run {display_path}[/cyan]\n")
+    else:
+        console.print(f"\n[bold red]Conversion failed[/bold red] after {result.iterations} attempts")
+        console.print("[dim]Try editing the source plan to be more structured, or use --max-retries[/dim]\n")
+        raise typer.Exit(1)
+
+
+@app.command()
 def done(
     phase: Annotated[
         str,
