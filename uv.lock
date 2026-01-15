@@ -108,7 +108,7 @@ wheels = [
 
 [[package]]
 name = "claude-debussy"
-version = "0.3.10"
+version = "0.3.14"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
@@ -144,7 +144,7 @@ dev = [
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "ltm", marker = "extra == 'ltm'", url = "https://github.com/matt-grain/Claude-LTM/releases/download/v0.4.5/ltm-0.4.5-py3-none-any.whl" },
+    { name = "ltm", marker = "extra == 'ltm'", url = "https://github.com/matt-grain/Claude-LTM/releases/download/v0.4.6/ltm-0.4.6-py3-none-any.whl" },
     { name = "plyer", specifier = ">=2.1.0" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pyyaml", specifier = ">=6.0.3" },
@@ -157,7 +157,7 @@ provides-extras = ["ltm"]
 [package.metadata.requires-dev]
 dev = [
     { name = "bandit", specifier = ">=1.9.2" },
-    { name = "ltm", url = "https://github.com/matt-grain/Claude-LTM/releases/download/v0.4.5/ltm-0.4.5-py3-none-any.whl" },
+    { name = "ltm", url = "https://github.com/matt-grain/Claude-LTM/releases/download/v0.4.6/ltm-0.4.6-py3-none-any.whl" },
     { name = "pre-commit", specifier = ">=4.5.1" },
     { name = "pyright", specifier = ">=1.1.408" },
     { name = "pytest", specifier = ">=9.0.2" },
@@ -346,13 +346,13 @@ wheels = [
 
 [[package]]
 name = "ltm"
-version = "0.4.5"
-source = { url = "https://github.com/matt-grain/Claude-LTM/releases/download/v0.4.5/ltm-0.4.5-py3-none-any.whl" }
+version = "0.4.6"
+source = { url = "https://github.com/matt-grain/Claude-LTM/releases/download/v0.4.6/ltm-0.4.6-py3-none-any.whl" }
 dependencies = [
     { name = "tiktoken" },
 ]
 wheels = [
-    { url = "https://github.com/matt-grain/Claude-LTM/releases/download/v0.4.5/ltm-0.4.5-py3-none-any.whl", hash = "sha256:9298349bba7e9a95b8a22aa8806e3fd52b46c4be5535f3073770ea2a6f2143cd" },
+    { url = "https://github.com/matt-grain/Claude-LTM/releases/download/v0.4.6/ltm-0.4.6-py3-none-any.whl", hash = "sha256:1a6832a4c2cca1be11eccd495ae29d7077117f63abbb3cbd4fd971cb41bafc00" },
 ]
 
 [package.metadata]

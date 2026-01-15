@@ -8,7 +8,7 @@ packages = ["src/debussy"]
 
 [project]
 name = "claude-debussy"
-version = "0.3.13"
+version = "0.3.14"
 description = "Orchestrate multi-phase Claude CLI sessions with compliance verification"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -44,7 +44,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-ltm = { url = "https://github.com/matt-grain/Claude-LTM/releases/download/v0.4.5/ltm-0.4.5-py3-none-any.whl" }
+ltm = { url = "https://github.com/matt-grain/Claude-LTM/releases/download/v0.4.6/ltm-0.4.6-py3-none-any.whl" }
 
 # ============================================================================
 # Tool Configuration - Eating Our Own Dog Food
