@@ -37,6 +37,7 @@ class PlanAuditor:
                     code="MASTER_NOT_FOUND",
                     message=f"Master plan not found: {master_plan_path}",
                     location=str(master_plan_path),
+                    suggestion="Create a master plan file with a '## Phases' table listing all phase files",
                 )
             )
             return AuditResult(
@@ -58,6 +59,7 @@ class PlanAuditor:
                     code="MASTER_PARSE_ERROR",
                     message=f"Failed to parse master plan: {e}",
                     location=str(master_plan_path),
+                    suggestion="Check the master plan format. Ensure it has a '## Phases' table with columns: Phase, Title, Focus, Risk, Status",
                 )
             )
             return AuditResult(
@@ -105,6 +107,7 @@ class PlanAuditor:
                             code="PHASE_PARSE_ERROR",
                             message=f"Failed to parse phase: {e}",
                             location=str(phase.path),
+                            suggestion="Check the phase file format. Ensure it has '## Gates' and '## Tasks' sections",
                         )
                     )
 
@@ -147,6 +150,7 @@ class PlanAuditor:
                     code="NO_PHASES",
                     message="Master plan has no phases defined",
                     location=str(master.path),
+                    suggestion="Add rows to the '## Phases' table. Each row should link to a phase file: | 1 | [Phase Title](phase-1.md) | Focus | Risk | Pending |",
                 )
             )
 
@@ -170,6 +174,7 @@ class PlanAuditor:
                     code="PHASE_NOT_FOUND",
                     message=f"Phase file not found: {phase.path.name}",
                     location=str(phase.path),
+                    suggestion=f"Create the phase file at '{phase.path.name}' or update the master plan to point to an existing file",
                 )
             )
 
@@ -193,6 +198,7 @@ class PlanAuditor:
                     code="MISSING_GATES",
                     message=f"Phase {phase.id} has no gates defined (critical for validation)",
                     location=str(phase.path),
+                    suggestion="Add a '## Gates' section with validation commands, e.g.:\n- ruff: 0 errors (command: `uv run ruff check .`)\n- tests: pass (command: `uv run pytest tests/`)",
                 )
             )
 
@@ -216,6 +222,7 @@ class PlanAuditor:
                     code="NO_NOTES_OUTPUT",
                     message=f"Phase {phase.id} has no notes output path specified",
                     location=str(phase.path),
+                    suggestion="Add '- [ ] Write notes to: `notes/NOTES_phase_X.md`' to the Process Wrapper section",
                 )
             )
 
@@ -244,6 +251,7 @@ class PlanAuditor:
                             code="MISSING_DEPENDENCY",
                             message=f"Phase {phase.id} depends on non-existent phase {dep_id}",
                             location=str(phase.path),
+                            suggestion=f"Either add phase {dep_id} to the master plan, or remove the dependency from phase {phase.id}",
                         )
                     )
 
@@ -255,6 +263,7 @@ class PlanAuditor:
                         code="CIRCULAR_DEPENDENCY",
                         message=f"Phase {phase.id} depends on itself",
                         location=str(phase.path),
+                        suggestion=f"Remove the self-dependency from phase {phase.id}'s 'Depends On' field",
                     )
                 )
 
@@ -320,6 +329,7 @@ class PlanAuditor:
                             code="CIRCULAR_DEPENDENCY",
                             message=f"Circular dependency detected: {cycle_str}",
                             location=None,
+                            suggestion=f"Break the cycle by removing one of the dependencies in: {cycle_str}",
                         )
                     )
                     break  # Only report first cycle found

@@ -68,7 +68,7 @@ class DesktopNotifier(Notifier):
             # Note: plyer's toast parameter only affects Windows behavior
             toast = level in ("error", "alert")
 
-            notification.notify(  # type: ignore[misc]
+            notification.notify(  # pyright: ignore[reportOptionalCall]
                 title=f"[{self.app_name}] {title}",
                 message=message,
                 app_name=self.app_name,

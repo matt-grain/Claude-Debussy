@@ -410,14 +410,54 @@ def audit(
         bool,
         typer.Option("--strict", help="Fail on warnings too"),
     ] = False,
+    verbose: Annotated[
+        int,
+        typer.Option("--verbose", "-v", count=True, help="Increase output verbosity (-v for details, -vv for structure)"),
+    ] = 0,
+    output_format: Annotated[
+        str,
+        typer.Option("--format", "-f", help="Output format: text, json"),
+    ] = "text",
 ) -> None:
     """Validate plan structure before running."""
     from debussy.core.auditor import PlanAuditor
 
-    console.print(f"\n[bold]Auditing:[/bold] {plan_path.name}\n")
-
     auditor = PlanAuditor()
     result = auditor.audit(plan_path)
+
+    # JSON output mode
+    if output_format == "json":
+        output = {
+            "passed": result.passed,
+            "summary": {
+                "master_plan": result.summary.master_plan,
+                "phases_found": result.summary.phases_found,
+                "phases_valid": result.summary.phases_valid,
+                "gates_total": result.summary.gates_total,
+                "errors": result.summary.errors,
+                "warnings": result.summary.warnings,
+            },
+            "issues": [
+                {
+                    "severity": issue.severity.value,
+                    "code": issue.code,
+                    "message": issue.message,
+                    "location": issue.location,
+                    "suggestion": issue.suggestion,
+                }
+                for issue in result.issues
+            ],
+        }
+        # Use print directly to avoid Rich markup processing
+        print(json.dumps(output, indent=2))
+        if not result.passed:
+            raise typer.Exit(1)
+        if strict and result.summary.warnings > 0:
+            raise typer.Exit(1)
+        return
+
+    # Text output mode
+    console.print(f"\n[bold]Auditing:[/bold] {plan_path.name}\n")
 
     # Display summary
     console.print(f"[bold]{result.summary.master_plan}[/bold]")
@@ -425,6 +465,10 @@ def audit(
     console.print(f"  Phases valid: {result.summary.phases_valid}")
     console.print(f"  Total gates: {result.summary.gates_total}")
     console.print()
+
+    # Verbose level 2: show parsed structure
+    if verbose >= 2:
+        _display_audit_structure(plan_path)
 
     # Display issues grouped by severity
     from debussy.core.audit import AuditSeverity
@@ -436,22 +480,19 @@ def audit(
     if errors:
         console.print("[bold red]Errors:[/bold red]")
         for issue in errors:
-            location = f" ({issue.location})" if issue.location else ""
-            console.print(f"  [red]✗[/red] {issue.message}{location}")
+            _display_issue(issue, verbose)
         console.print()
 
     if warnings:
         console.print("[bold yellow]Warnings:[/bold yellow]")
         for issue in warnings:
-            location = f" ({issue.location})" if issue.location else ""
-            console.print(f"  [yellow]⚠[/yellow] {issue.message}{location}")
+            _display_issue(issue, verbose)
         console.print()
 
     if infos:
         console.print("[bold cyan]Info:[/bold cyan]")
         for issue in infos:
-            location = f" ({issue.location})" if issue.location else ""
-            console.print(f"  [cyan]i[/cyan] {issue.message}{location}")
+            _display_issue(issue, verbose)
         console.print()
 
     # Summary
@@ -470,6 +511,82 @@ def audit(
     if strict and result.summary.warnings > 0:
         console.print("[yellow]Strict mode: Failing due to warnings[/yellow]\n")
         raise typer.Exit(1)
+
+
+def _display_issue(issue: object, verbose: int) -> None:
+    """Display an audit issue with optional verbose details.
+
+    Args:
+        issue: The AuditIssue to display.
+        verbose: Verbosity level (0=basic, 1=with suggestions, 2=full).
+    """
+    from debussy.core.audit import AuditIssue, AuditSeverity
+
+    if not isinstance(issue, AuditIssue):
+        return
+
+    # Icon based on severity
+    icon_map = {
+        AuditSeverity.ERROR: "[red]✗[/red]",
+        AuditSeverity.WARNING: "[yellow]⚠[/yellow]",
+        AuditSeverity.INFO: "[cyan]i[/cyan]",
+    }
+    icon = icon_map.get(issue.severity, " ")
+
+    # Basic message
+    location = f" ({issue.location})" if issue.location else ""
+    console.print(f"  {icon} {issue.message}{location}")
+
+    # Verbose level 1+: show suggestions
+    if verbose >= 1 and issue.suggestion:
+        # Handle multi-line suggestions with proper indentation
+        suggestion_lines = issue.suggestion.split("\n")
+        console.print(f"      [dim]Suggestion:[/dim] {suggestion_lines[0]}")
+        for line in suggestion_lines[1:]:
+            console.print(f"                  {line}")
+
+
+def _display_audit_structure(plan_path: Path) -> None:
+    """Display parsed plan structure for verbose output.
+
+    Args:
+        plan_path: Path to the master plan file.
+    """
+    from debussy.parsers.master import parse_master_plan
+    from debussy.parsers.phase import parse_phase
+
+    try:
+        master = parse_master_plan(plan_path)
+    except Exception:
+        return  # Structure display is best-effort
+
+    console.print("[bold]Parsed Structure:[/bold]")
+    console.print(f"  Master Plan: {master.name}")
+    console.print()
+
+    for phase in master.phases:
+        console.print(f"  [cyan]Phase {phase.id}:[/cyan] {phase.title}")
+        console.print(f"    Status: {phase.status.value}")
+        console.print(f"    Path: {phase.path}")
+
+        if phase.depends_on:
+            console.print(f"    Depends on: {', '.join(phase.depends_on)}")
+
+        # Try to parse phase file for more details
+        if phase.path.exists():
+            try:
+                detailed = parse_phase(phase.path, phase.id)
+                if detailed.gates:
+                    console.print("    Gates:")
+                    for gate in detailed.gates:
+                        blocking = "" if gate.blocking else " [non-blocking]"
+                        console.print(f"      - {gate.name}: `{gate.command}`{blocking}")
+                if detailed.notes_output:
+                    console.print(f"    Notes output: {detailed.notes_output}")
+            except Exception:
+                pass  # Skip details if parsing fails
+
+        console.print()
 
 
 @app.command("plan-init")

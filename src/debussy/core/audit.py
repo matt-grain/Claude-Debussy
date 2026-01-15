@@ -22,6 +22,7 @@ class AuditIssue(BaseModel):
     code: str  # e.g., "MISSING_GATES", "PHASE_NOT_FOUND"
     message: str
     location: str | None = None  # e.g., "phase-1.md:45"
+    suggestion: str | None = None  # Suggested fix for the issue
 
 
 class AuditSummary(BaseModel):
