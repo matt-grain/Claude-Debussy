@@ -1,6 +1,6 @@
 # Phase 2: Templates & Init Command
 
-**Status:** Pending
+**Status:** Completed
 **Master Plan:** [MASTER_PLAN.md](MASTER_PLAN.md)
 **Depends On:** [Phase 1](phase-1-audit.md) (audit command must exist to validate output)
 

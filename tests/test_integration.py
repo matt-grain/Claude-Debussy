@@ -272,9 +272,7 @@ class TestCompleteWorkflow:
         master = MasterPlan(
             name=plan.name,
             path=plan.path,
-            phases=[
-                Phase(id=p.id, title=p.title, path=p.path, status=p.status) for p in plan.phases
-            ],
+            phases=[Phase(id=p.id, title=p.title, path=p.path, status=p.status) for p in plan.phases],
         )
         run_id = state1.create_run(master)
         state1.set_current_phase(run_id, "1")

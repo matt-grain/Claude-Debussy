@@ -84,9 +84,7 @@ class ComplianceChecker:
 
         # 3. Check required agents were invoked
         agents_used = report.get("agents_used", [])
-        claimed_agents: list[str] = (
-            [str(a) for a in agents_used] if isinstance(agents_used, list) else []
-        )
+        claimed_agents: list[str] = [str(a) for a in agents_used] if isinstance(agents_used, list) else []
         agent_issues = self._check_agent_invocations(
             session_log,
             phase.required_agents,
@@ -98,9 +96,7 @@ class ComplianceChecker:
 
         # 4. Check required steps were completed
         steps_completed = report.get("steps_completed", [])
-        claimed_steps: list[str] = (
-            [str(s) for s in steps_completed] if isinstance(steps_completed, list) else []
-        )
+        claimed_steps: list[str] = [str(s) for s in steps_completed] if isinstance(steps_completed, list) else []
         step_issues = self._check_required_steps(
             phase.required_steps,
             claimed_steps,
@@ -193,9 +189,7 @@ class ComplianceChecker:
                 rf"launching.*{re.escape(agent)}",
             ]
 
-            found_in_log = any(
-                re.search(pattern, session_log, re.IGNORECASE | re.DOTALL) for pattern in patterns
-            )
+            found_in_log = any(re.search(pattern, session_log, re.IGNORECASE | re.DOTALL) for pattern in patterns)
             claimed_used = agent in claimed_agents
 
             if not found_in_log and not claimed_used:
@@ -242,9 +236,7 @@ class ComplianceChecker:
 
             # Check for evidence in session log
             patterns = step_patterns.get(step, [step])
-            found_in_log = any(
-                re.search(pattern, session_log, re.IGNORECASE) for pattern in patterns
-            )
+            found_in_log = any(re.search(pattern, session_log, re.IGNORECASE) for pattern in patterns)
 
             if not claimed and not found_in_log:
                 issues.append(

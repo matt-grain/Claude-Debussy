@@ -432,9 +432,7 @@ class DebussyTUI(App):
         if resume and self._resumable_run:
             _, completed_phases = self._resumable_run
             self._skip_phases = completed_phases
-            self.write_log(
-                f"[cyan]Resuming: skipping {len(completed_phases)} completed phase(s)[/cyan]"
-            )
+            self.write_log(f"[cyan]Resuming: skipping {len(completed_phases)} completed phase(s)[/cyan]")
         else:
             self.write_log("[dim]Starting fresh run...[/dim]")
 
@@ -719,9 +717,7 @@ class DebussyTUI(App):
         # Cancel the worker (this will trigger CancelledError in Claude runner)
         if self._worker and self._worker.is_running:
             self._worker.cancel()
-            self.call_later(
-                self.write_log, "[dim]Waiting for Claude processes to terminate...[/dim]"
-            )
+            self.call_later(self.write_log, "[dim]Waiting for Claude processes to terminate...[/dim]")
 
             # Wait for worker to actually finish (with timeout)
             for _ in range(50):  # Max 5 seconds
@@ -734,9 +730,7 @@ class DebussyTUI(App):
 
         # Verify everything is dead
         if self._verify_cleanup_complete():
-            self.call_later(
-                self.write_log, "[green]All Claude instances terminated. Cleanup complete.[/green]"
-            )
+            self.call_later(self.write_log, "[green]All Claude instances terminated. Cleanup complete.[/green]")
         else:
             self.call_later(
                 self.write_log,
@@ -826,9 +820,7 @@ class DebussyTUI(App):
         Per-turn updates show cumulative stats within current session.
         Final result (with cost > 0) adds session totals to run totals.
         """
-        self._require_controller().update_token_stats(
-            input_tokens, output_tokens, cost_usd, context_tokens, context_window
-        )
+        self._require_controller().update_token_stats(input_tokens, output_tokens, cost_usd, context_tokens, context_window)
         self.update_hud()
 
     def show_status_popup(self, details: dict[str, str]) -> None:
@@ -876,9 +868,7 @@ class TextualUI:
             raise RuntimeError("TextualUI.context accessed before app was created")
         return self._controller.context
 
-    def create_app(
-        self, orchestration_coro: Callable[[], Coroutine[Any, Any, str]] | None = None
-    ) -> DebussyTUI:
+    def create_app(self, orchestration_coro: Callable[[], Coroutine[Any, Any, str]] | None = None) -> DebussyTUI:
         """Create and return the Textual app with controller.
 
         Creates the app, then creates an OrchestrationController and
@@ -895,9 +885,7 @@ class TextualUI:
         self._app.set_controller(self._controller)
         return self._app
 
-    def run_with_orchestration(
-        self, orchestration_coro: Callable[[], Coroutine[Any, Any, str]]
-    ) -> None:
+    def run_with_orchestration(self, orchestration_coro: Callable[[], Coroutine[Any, Any, str]]) -> None:
         """Run the TUI with orchestration.
 
         This is the main entry point - it blocks until the app exits.
@@ -977,9 +965,7 @@ class TextualUI:
     ) -> None:
         """Update token usage statistics."""
         if self._app:
-            self._app.update_token_stats(
-                input_tokens, output_tokens, cost_usd, context_tokens, context_window
-            )
+            self._app.update_token_stats(input_tokens, output_tokens, cost_usd, context_tokens, context_window)
 
     def set_active_agent(self, agent: str) -> None:
         """Update the active agent display."""

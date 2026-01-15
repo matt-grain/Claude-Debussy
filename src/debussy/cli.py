@@ -725,6 +725,10 @@ def convert(
         int,
         typer.Option("--max-retries", help="Max conversion attempts"),
     ] = 3,
+    timeout: Annotated[
+        int,
+        typer.Option("--timeout", "-t", help="Timeout for Claude calls in seconds"),
+    ] = 120,
     force: Annotated[
         bool,
         typer.Option("--force", "-f", help="Overwrite existing output directory"),
@@ -766,6 +770,7 @@ def convert(
         templates_dir=TEMPLATES_DIR,
         max_iterations=max_retries,
         model=model,
+        timeout=timeout,
     )
 
     # Run conversion with progress display

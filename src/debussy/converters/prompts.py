@@ -40,6 +40,16 @@ You must create these files:
 
 5. Phase filenames should match the format: phase-N.md (e.g., phase-1.md, phase-2.md)
 
+6. **MANDATORY - Preserve Subagent References**: If the source plan mentions any Claude Code subagents
+   (e.g., `python-task-validator`, `textual-tui-expert`, `llm-security-expert`, `explore`, `debussy`),
+   you MUST include them in the converted phases. Add a ## Validation section to each phase that uses them:
+   ```
+   ## Validation
+   - Use `python-task-validator` to verify code quality
+   ```
+   If no specific agent is mentioned but the plan involves Python code, add `python-task-validator`.
+   These subagent references are CRITICAL for the execution workflow and must NEVER be omitted.
+
 {previous_issues_section}
 
 ## Output Format

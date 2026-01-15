@@ -228,6 +228,9 @@ class PlanConverter:
     def _run_claude(self, prompt: str) -> str:
         """Run Claude CLI with the given prompt.
 
+        Uses stdin to pass the prompt to avoid command-line length limits
+        on Windows (32KB limit). This allows prompts of any size.
+
         Args:
             prompt: Prompt to send to Claude
 
@@ -238,8 +241,19 @@ class PlanConverter:
             subprocess.TimeoutExpired: If Claude times out.
             FileNotFoundError: If Claude CLI is not installed.
         """
+        # Use stdin (-) to avoid Windows command-line length limits
+        # Use --system-prompt to ensure clean output without custom personalities
+        # Use --no-session-persistence to avoid polluting session history
         result = subprocess.run(
-            ["claude", "--print", "-p", prompt, "--model", self.model],
+            [
+                "claude",
+                "--print",
+                "-p", "-",
+                "--model", self.model,
+                "--system-prompt", "You are a plan conversion assistant. Output only the requested file content in the exact format specified. No commentary.",
+                "--no-session-persistence",
+            ],
+            input=prompt,
             capture_output=True,
             text=True,
             timeout=self.timeout,

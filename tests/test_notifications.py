@@ -250,9 +250,7 @@ class TestNtfyNotifier:
         mock_client = MagicMock()
         mock_response = MagicMock()
         mock_response.status_code = 500
-        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "Server error", request=MagicMock(), response=mock_response
-        )
+        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError("Server error", request=MagicMock(), response=mock_response)
         mock_client.post.return_value = mock_response
         notifier._client = mock_client
 

@@ -70,9 +70,7 @@ class TestRunManagement:
         assert run_id is not None
         assert len(run_id) > 0
 
-    def test_create_run_unique_ids(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_create_run_unique_ids(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test that each run gets a unique ID."""
         run_id1 = state_manager.create_run(sample_plan)
         run_id2 = state_manager.create_run(sample_plan)
@@ -119,9 +117,7 @@ class TestRunManagement:
         assert run_id1 in run_ids
         assert run_id2 in run_ids
 
-    def test_list_runs_with_limit(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_list_runs_with_limit(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test that list_runs respects the limit."""
         for _ in range(5):
             state_manager.create_run(sample_plan)
@@ -133,9 +129,7 @@ class TestRunManagement:
 class TestRunStatusTransitions:
     """Tests for run status state transitions."""
 
-    def test_update_run_status_to_completed(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_update_run_status_to_completed(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test transitioning run to completed."""
         run_id = state_manager.create_run(sample_plan)
         state_manager.update_run_status(run_id, RunStatus.COMPLETED)
@@ -145,9 +139,7 @@ class TestRunStatusTransitions:
         assert run_state.status == RunStatus.COMPLETED
         assert run_state.completed_at is not None
 
-    def test_update_run_status_to_failed(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_update_run_status_to_failed(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test transitioning run to failed."""
         run_id = state_manager.create_run(sample_plan)
         state_manager.update_run_status(run_id, RunStatus.FAILED)
@@ -156,9 +148,7 @@ class TestRunStatusTransitions:
         assert run_state is not None
         assert run_state.status == RunStatus.FAILED
 
-    def test_update_run_status_to_paused(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_update_run_status_to_paused(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test transitioning run to paused."""
         run_id = state_manager.create_run(sample_plan)
         state_manager.update_run_status(run_id, RunStatus.PAUSED)
@@ -180,9 +170,7 @@ class TestRunStatusTransitions:
 class TestPhaseExecution:
     """Tests for phase execution tracking."""
 
-    def test_create_phase_execution(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_create_phase_execution(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test creating a phase execution record."""
         run_id = state_manager.create_run(sample_plan)
         state_manager.create_phase_execution(run_id, "1", attempt=1)
@@ -193,9 +181,7 @@ class TestPhaseExecution:
         assert run_state.phase_executions[0].phase_id == "1"
         assert run_state.phase_executions[0].attempt == 1
 
-    def test_multiple_phase_attempts(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_multiple_phase_attempts(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test tracking multiple attempts for the same phase."""
         run_id = state_manager.create_run(sample_plan)
         state_manager.create_phase_execution(run_id, "1", attempt=1)
@@ -209,9 +195,7 @@ class TestPhaseExecution:
         attempts = [e.attempt for e in run_state.phase_executions]
         assert attempts == [1, 2, 3]
 
-    def test_update_phase_status(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_update_phase_status(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test updating phase status."""
         run_id = state_manager.create_run(sample_plan)
         state_manager.create_phase_execution(run_id, "1", attempt=1)
@@ -221,9 +205,7 @@ class TestPhaseExecution:
         assert run_state is not None
         assert run_state.phase_executions[0].status == PhaseStatus.RUNNING
 
-    def test_phase_status_transitions(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_phase_status_transitions(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test complete phase status transition flow."""
         run_id = state_manager.create_run(sample_plan)
         state_manager.create_phase_execution(run_id, "1", attempt=1)
@@ -237,15 +219,11 @@ class TestPhaseExecution:
         assert run_state is not None
         assert run_state.phase_executions[0].status == PhaseStatus.COMPLETED
 
-    def test_phase_status_with_error(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_phase_status_with_error(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test setting phase status with error message."""
         run_id = state_manager.create_run(sample_plan)
         state_manager.create_phase_execution(run_id, "1", attempt=1)
-        state_manager.update_phase_status(
-            run_id, "1", PhaseStatus.FAILED, error_message="Gate failed: ruff check"
-        )
+        state_manager.update_phase_status(run_id, "1", PhaseStatus.FAILED, error_message="Gate failed: ruff check")
 
         run_state = state_manager.get_run(run_id)
         assert run_state is not None
@@ -290,9 +268,7 @@ class TestGateResults:
 class TestCompletionSignals:
     """Tests for completion signal handling."""
 
-    def test_record_completion_signal(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_record_completion_signal(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test recording a completion signal from Claude worker."""
         run_id = state_manager.create_run(sample_plan)
 
@@ -308,9 +284,7 @@ class TestCompletionSignals:
         assert retrieved is not None
         assert retrieved.status == "completed"
 
-    def test_completion_signal_with_reason(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_completion_signal_with_reason(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test recording a blocked completion signal with reason."""
         run_id = state_manager.create_run(sample_plan)
 
@@ -327,9 +301,7 @@ class TestCompletionSignals:
         assert retrieved.status == "blocked"
         assert retrieved.reason == "Missing dependency: libfoo"
 
-    def test_completion_signal_with_report(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_completion_signal_with_report(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test recording a completion signal with JSON report."""
         run_id = state_manager.create_run(sample_plan)
 
@@ -349,9 +321,7 @@ class TestCompletionSignals:
         assert retrieved.report is not None
         assert retrieved.report["tasks_completed"] == 5
 
-    def test_get_nonexistent_signal(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_get_nonexistent_signal(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test getting a nonexistent completion signal."""
         run_id = state_manager.create_run(sample_plan)
         retrieved = state_manager.get_completion_signal(run_id, "nonexistent")
@@ -375,9 +345,7 @@ class TestProgressLogging:
 class TestStateMachineIntegrity:
     """Tests for state machine integrity - ensuring no invalid state transitions."""
 
-    def test_sequential_phase_execution(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_sequential_phase_execution(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test executing phases sequentially maintains correct state."""
         run_id = state_manager.create_run(sample_plan)
 
@@ -413,9 +381,7 @@ class TestStateMachineIntegrity:
         state_manager.create_phase_execution(run_id, "1", attempt=1)
         state_manager.update_phase_status(run_id, "1", PhaseStatus.RUNNING)
         state_manager.update_phase_status(run_id, "1", PhaseStatus.VALIDATING)
-        state_manager.update_phase_status(
-            run_id, "1", PhaseStatus.FAILED, error_message="Ruff check failed"
-        )
+        state_manager.update_phase_status(run_id, "1", PhaseStatus.FAILED, error_message="Ruff check failed")
 
         # Attempt 2 - succeeds
         state_manager.create_phase_execution(run_id, "1", attempt=2)
@@ -432,9 +398,7 @@ class TestStateMachineIntegrity:
         assert phase1_execs[0].status == PhaseStatus.FAILED
         assert phase1_execs[1].status == PhaseStatus.COMPLETED
 
-    def test_max_retries_exceeded(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_max_retries_exceeded(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test state when max retries are exceeded."""
         run_id = state_manager.create_run(sample_plan)
         state_manager.set_current_phase(run_id, "1")
@@ -443,9 +407,7 @@ class TestStateMachineIntegrity:
         for attempt in range(1, 4):
             state_manager.create_phase_execution(run_id, "1", attempt=attempt)
             state_manager.update_phase_status(run_id, "1", PhaseStatus.RUNNING)
-            state_manager.update_phase_status(
-                run_id, "1", PhaseStatus.FAILED, error_message=f"Attempt {attempt} failed"
-            )
+            state_manager.update_phase_status(run_id, "1", PhaseStatus.FAILED, error_message=f"Attempt {attempt} failed")
 
         state_manager.update_run_status(run_id, RunStatus.FAILED)
 
@@ -454,9 +416,7 @@ class TestStateMachineIntegrity:
         assert run_state.status == RunStatus.FAILED
         assert len(run_state.phase_executions) == 3
 
-    def test_human_intervention_state(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_human_intervention_state(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test state when human intervention is required."""
         run_id = state_manager.create_run(sample_plan)
         state_manager.set_current_phase(run_id, "1")
@@ -468,9 +428,7 @@ class TestStateMachineIntegrity:
         exec_record = run_state.phase_executions[0]
         assert exec_record.status == PhaseStatus.AWAITING_HUMAN
 
-    def test_concurrent_runs_isolation(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_concurrent_runs_isolation(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test that multiple runs maintain isolated state."""
         run_id1 = state_manager.create_run(sample_plan)
         run_id2 = state_manager.create_run(sample_plan)
@@ -502,9 +460,7 @@ class TestStateMachineIntegrity:
 class TestResumeAndSkip:
     """Tests for resume and skip completed phases feature."""
 
-    def test_find_resumable_run_returns_paused(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_find_resumable_run_returns_paused(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test finding a paused run for the same plan."""
         run_id = state_manager.create_run(sample_plan)
         state_manager.update_run_status(run_id, RunStatus.PAUSED)
@@ -515,9 +471,7 @@ class TestResumeAndSkip:
         assert result.id == run_id
         assert result.status == RunStatus.PAUSED
 
-    def test_find_resumable_run_returns_failed(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_find_resumable_run_returns_failed(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test finding a failed run for the same plan."""
         run_id = state_manager.create_run(sample_plan)
         state_manager.update_run_status(run_id, RunStatus.FAILED)
@@ -528,9 +482,7 @@ class TestResumeAndSkip:
         assert result.id == run_id
         assert result.status == RunStatus.FAILED
 
-    def test_find_resumable_run_returns_running(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_find_resumable_run_returns_running(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test finding a running (interrupted) run for the same plan."""
         run_id = state_manager.create_run(sample_plan)
         # Status is RUNNING by default
@@ -541,9 +493,7 @@ class TestResumeAndSkip:
         assert result.id == run_id
         assert result.status == RunStatus.RUNNING
 
-    def test_find_resumable_run_ignores_completed(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_find_resumable_run_ignores_completed(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test that completed runs are not returned as resumable."""
         run_id = state_manager.create_run(sample_plan)
         state_manager.update_run_status(run_id, RunStatus.COMPLETED)
@@ -552,9 +502,7 @@ class TestResumeAndSkip:
 
         assert result is None
 
-    def test_find_resumable_run_returns_most_recent(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_find_resumable_run_returns_most_recent(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test that the most recent incomplete run is returned."""
         # Create older run
         run_id1 = state_manager.create_run(sample_plan)
@@ -569,9 +517,7 @@ class TestResumeAndSkip:
         assert result is not None
         assert result.id == run_id2  # Most recent
 
-    def test_find_resumable_run_different_plan(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_find_resumable_run_different_plan(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test that runs for different plans are not returned."""
         run_id = state_manager.create_run(sample_plan)
         state_manager.update_run_status(run_id, RunStatus.PAUSED)
@@ -581,16 +527,12 @@ class TestResumeAndSkip:
 
         assert result is None
 
-    def test_find_resumable_run_none_when_empty(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_find_resumable_run_none_when_empty(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test that None is returned when no runs exist."""
         result = state_manager.find_resumable_run(sample_plan.path)
         assert result is None
 
-    def test_get_completed_phases_empty(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_get_completed_phases_empty(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test getting completed phases when none are completed."""
         run_id = state_manager.create_run(sample_plan)
 
@@ -598,9 +540,7 @@ class TestResumeAndSkip:
 
         assert completed == set()
 
-    def test_get_completed_phases_single(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_get_completed_phases_single(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test getting a single completed phase."""
         run_id = state_manager.create_run(sample_plan)
         state_manager.create_phase_execution(run_id, "1", attempt=1)
@@ -610,9 +550,7 @@ class TestResumeAndSkip:
 
         assert completed == {"1"}
 
-    def test_get_completed_phases_multiple(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_get_completed_phases_multiple(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test getting multiple completed phases."""
         run_id = state_manager.create_run(sample_plan)
 
@@ -631,9 +569,7 @@ class TestResumeAndSkip:
 
         assert completed == {"1", "2"}
 
-    def test_get_completed_phases_ignores_failed(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_get_completed_phases_ignores_failed(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test that failed phases are not included in completed set."""
         run_id = state_manager.create_run(sample_plan)
 
@@ -649,9 +585,7 @@ class TestResumeAndSkip:
 
         assert completed == {"1"}
 
-    def test_get_completed_phases_with_retries(
-        self, state_manager: StateManager, sample_plan: MasterPlan
-    ) -> None:
+    def test_get_completed_phases_with_retries(self, state_manager: StateManager, sample_plan: MasterPlan) -> None:
         """Test that phases completed after retries are included."""
         run_id = state_manager.create_run(sample_plan)
 

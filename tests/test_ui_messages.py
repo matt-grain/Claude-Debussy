@@ -175,9 +175,7 @@ class TestOrchestrationControllerSkeleton:
         """Controller should have an action queue."""
         assert hasattr(controller, "_action_queue")
 
-    def test_post_sends_to_app(
-        self, controller: OrchestrationController, mock_app: MagicMock
-    ) -> None:
+    def test_post_sends_to_app(self, controller: OrchestrationController, mock_app: MagicMock) -> None:
         """_post() should forward messages to the app."""
         msg = HUDMessageSet("test")
         controller._post(msg)

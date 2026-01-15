@@ -85,9 +85,7 @@ class TestGateVerification:
 
         session_log = make_session_log_with_agents(["doc-sync-manager", "task-validator"])
 
-        result = await compliance_checker.verify_completion(
-            sample_phase, session_log, completion_report=None
-        )
+        result = await compliance_checker.verify_completion(sample_phase, session_log, completion_report=None)
 
         assert result.passed
         assert len(result.issues) == 0
@@ -110,9 +108,7 @@ class TestGateVerification:
 
         session_log = make_session_log_with_agents(["doc-sync-manager", "task-validator"])
 
-        result = await compliance_checker.verify_completion(
-            sample_phase, session_log, completion_report=None
-        )
+        result = await compliance_checker.verify_completion(sample_phase, session_log, completion_report=None)
 
         assert not result.passed
         assert len(result.issues) >= 1
@@ -138,9 +134,7 @@ class TestGateVerification:
 
         session_log = make_session_log_with_agents(["doc-sync-manager", "task-validator"])
 
-        result = await compliance_checker.verify_completion(
-            sample_phase, session_log, completion_report=None
-        )
+        result = await compliance_checker.verify_completion(sample_phase, session_log, completion_report=None)
 
         assert not result.passed
         gate_issues = [i for i in result.issues if i.type == ComplianceIssueType.GATES_FAILED]
@@ -163,9 +157,7 @@ class TestAgentVerification:
         # Only invoke one of the two required agents
         session_log = make_session_log_with_agents(["doc-sync-manager"])
 
-        result = await compliance_checker.verify_completion(
-            sample_phase, session_log, completion_report=None
-        )
+        result = await compliance_checker.verify_completion(sample_phase, session_log, completion_report=None)
 
         assert not result.passed
         agent_issues = [i for i in result.issues if i.type == ComplianceIssueType.AGENT_SKIPPED]
@@ -184,9 +176,7 @@ class TestAgentVerification:
 
         session_log = make_session_log_with_agents(["doc-sync-manager", "task-validator"])
 
-        result = await compliance_checker.verify_completion(
-            sample_phase, session_log, completion_report=None
-        )
+        result = await compliance_checker.verify_completion(sample_phase, session_log, completion_report=None)
 
         # Should pass (assuming gates pass)
         agent_issues = [i for i in result.issues if i.type == ComplianceIssueType.AGENT_SKIPPED]
@@ -236,9 +226,7 @@ class TestRemediationStrategy:
 
         session_log = make_session_log_with_agents(["doc-sync-manager", "task-validator"])
 
-        result = await compliance_checker.verify_completion(
-            sample_phase, session_log, completion_report=None
-        )
+        result = await compliance_checker.verify_completion(sample_phase, session_log, completion_report=None)
 
         # Single gate failure should suggest targeted fix
         assert result.remediation in (
@@ -259,9 +247,7 @@ class TestRemediationStrategy:
         # No agents invoked
         session_log = ""
 
-        result = await compliance_checker.verify_completion(
-            sample_phase, session_log, completion_report=None
-        )
+        result = await compliance_checker.verify_completion(sample_phase, session_log, completion_report=None)
 
         # Missing agents is a more serious issue
         assert result.remediation in (
@@ -286,9 +272,7 @@ class TestCompletionReport:
         session_log = make_session_log_with_agents(["doc-sync-manager", "task-validator"])
         report = {"agents_used": ["doc-sync-manager", "task-validator"]}
 
-        result = await compliance_checker.verify_completion(
-            sample_phase, session_log, completion_report=report
-        )
+        result = await compliance_checker.verify_completion(sample_phase, session_log, completion_report=report)
 
         # Report should help verify compliance
         agent_issues = [i for i in result.issues if i.type == ComplianceIssueType.AGENT_SKIPPED]
@@ -308,9 +292,7 @@ class TestEdgeCases:
         """Test handling empty session log."""
         mock_gate_runner.run_gates = AsyncMock(return_value=[make_gate_result("test", True, "OK")])
 
-        result = await compliance_checker.verify_completion(
-            sample_phase, "", completion_report=None
-        )
+        result = await compliance_checker.verify_completion(sample_phase, "", completion_report=None)
 
         # Empty log means agents weren't detected
         agent_issues = [i for i in result.issues if i.type == ComplianceIssueType.AGENT_SKIPPED]
@@ -346,14 +328,10 @@ class TestEdgeCases:
         sample_phase: Phase,
     ) -> None:
         """Test handling gate timeout."""
-        mock_gate_runner.run_gates = AsyncMock(
-            return_value=[make_gate_result("slow", False, "Command timed out")]
-        )
+        mock_gate_runner.run_gates = AsyncMock(return_value=[make_gate_result("slow", False, "Command timed out")])
 
         session_log = make_session_log_with_agents(["doc-sync-manager", "task-validator"])
 
-        result = await compliance_checker.verify_completion(
-            sample_phase, session_log, completion_report=None
-        )
+        result = await compliance_checker.verify_completion(sample_phase, session_log, completion_report=None)
 
         assert not result.passed

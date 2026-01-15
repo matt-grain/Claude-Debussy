@@ -133,7 +133,8 @@ def _parse_gates(content: str) -> list[Gate]:
     section_content = gates_section.group(1)
 
     # Parse gate lines: "- gate_name: requirement" or "- **gate_name**: requirement"
-    gate_pattern = re.compile(r"^[-*]\s+\*{0,2}(\w+)\*{0,2}:\s*(.+)$", re.MULTILINE)
+    # Note: [\w-]+ allows hyphenated names like "backend-lint", "type-check"
+    gate_pattern = re.compile(r"^[-*]\s+\*{0,2}([\w-]+)\*{0,2}:\s*(.+)$", re.MULTILINE)
     for match in gate_pattern.finditer(section_content):
         name = match.group(1).strip()
         requirement = match.group(2).strip()

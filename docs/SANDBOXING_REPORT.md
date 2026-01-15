@@ -309,52 +309,113 @@ bwrap \
 | **Performance Impact** | Minimal - near-native performance |
 | **UX Impact** | Low on Linux, requires fallback on other platforms |
 
-### 4.3 Claude's Built-in Sandbox (--sandbox flag)
+### 4.3 Claude's Built-in Sandbox (`/sandbox` command)
 
-**Overview:** Claude Code's native sandboxing mode (if available).
+**Overview:** Claude Code's native sandboxing mode using OS-level primitives.
 
 **Analysis:**
-Based on Claude Code documentation and observed behavior, the `--sandbox` flag may provide:
-- Restricted file system access to specified directories
-- Limited command execution (allowlist-based)
-- Controlled tool usage
+Claude Code provides built-in sandboxing via the `/sandbox` slash command, which uses:
+- **Linux:** Bubblewrap (bwrap) for namespace isolation
+- **macOS:** Seatbelt (sandbox-exec) for process sandboxing
+- **Windows:** Not supported (planned)
+
+The sandbox provides two modes:
+1. **Auto-allow mode:** Sandboxed bash commands run automatically without permission prompts
+2. **Regular mode:** Commands go through standard permission flow even when sandboxed
+
+**Key Limitation:** In Anthropic's internal usage, sandboxing reduced permission prompts by 84% - but this still leaves 16% requiring interaction, which breaks fully autonomous orchestration.
 
 **Implementation Approach:**
-```python
-process = await asyncio.create_subprocess_exec(
-    self.claude_command,
-    "--sandbox",                      # Enable native sandboxing
-    "--allowed-paths", project_dir,   # Restrict to project
-    "--output-format", "stream-json",
-    "-p", prompt,
-    ...
-)
+```bash
+# Enable via slash command in interactive session
+/sandbox
+
+# Or via environment variable (undocumented)
+IS_SANDBOX=1 claude ...
 ```
 
 | Criterion | Assessment |
 |-----------|------------|
 | **Pros** | - Native integration (no additional tools) |
-| | - Cross-platform (works wherever Claude works) |
 | | - Maintained by Anthropic |
 | | - Minimal performance overhead |
-| | - No user setup required |
-| **Cons** | - Replaces `--dangerously-skip-permissions` (workflow changes) |
-| | - May require interactive permission prompts |
-| | - Less granular than container isolation |
-| | - Depends on Anthropic's implementation |
-| | - Feature availability may vary by version |
-| **Platform Compatibility** | All platforms where Claude Code runs |
-| **Risk Reduction** | **MEDIUM-HIGH** - Depends on implementation depth |
-| **Implementation Feasibility** | High - Minimal code changes |
+| | - OS-level enforcement (not just prompts) |
+| | - Auto-allow mode reduces friction |
+| **Cons** | - **Windows NOT supported** (Linux/macOS only) |
+| | - Still requires some permission prompts (16%) |
+| | - Cannot combine with `--dangerously-skip-permissions` for full YOLO |
+| | - Interactive `/sandbox` command, not a CLI flag |
+| | - Less isolation than containers |
+| **Platform Compatibility** | Linux and macOS only; Windows support planned |
+| **Risk Reduction** | **MEDIUM-HIGH** - OS-level sandboxing |
+| **Implementation Feasibility** | Low for Debussy - requires interactive session |
 | **Performance Impact** | Minimal |
-| **UX Impact** | May require handling permission prompts |
+| **UX Impact** | Medium - still has some permission prompts |
 
-**Investigation Required:** The current Debussy implementation explicitly uses `--dangerously-skip-permissions` to avoid interactive prompts. Transitioning to `--sandbox` or default permission mode requires:
-1. Determining if Claude Code supports non-interactive sandbox mode
-2. Understanding how to pre-approve necessary operations
-3. Testing compatibility with the compliance verification workflow
+**Conclusion:** Native sandbox is unsuitable for Debussy's fully autonomous orchestration because:
+1. No Windows support
+2. Cannot eliminate all permission prompts
+3. Requires interactive session to enable
 
-### 4.4 gVisor (runsc)
+### 4.4 Anthropic DevContainer (RECOMMENDED)
+
+**Overview:** Anthropic's official preconfigured Docker development environment with security hardening.
+
+**Analysis:**
+Anthropic provides an official devcontainer specifically designed for secure Claude Code execution:
+- **Cross-platform:** Works on Linux, macOS, and Windows (via Docker Desktop)
+- **YOLO-compatible:** Designed to be used with `--dangerously-skip-permissions`
+- **Network firewall:** Restricts outbound connections to allowlisted domains only
+- **Pre-built:** Includes Node.js 20, dev tools, ZSH, and Claude CLI
+
+**Security Features:**
+- Custom firewall restricting network to: npm registry, GitHub, Claude API, DNS, SSH
+- Default-deny policy for all other outbound connections
+- Startup verification of firewall rules
+- Process isolation from host system
+
+**Implementation Approach:**
+```python
+# Debussy spawns Claude inside the devcontainer
+docker_cmd = [
+    "docker", "run", "--rm",
+    "-v", f"{project_root}:/workspace:rw",
+    "-w", "/workspace",
+    "-e", f"ANTHROPIC_API_KEY={api_key}",
+    "ghcr.io/anthropics/claude-code-devcontainer:latest",  # Official image
+    "claude", "--dangerously-skip-permissions",
+    "--output-format", "stream-json",
+    "-p", prompt
+]
+```
+
+| Criterion | Assessment |
+|-----------|------------|
+| **Pros** | - **Cross-platform** (Linux, macOS, Windows) |
+| | - **YOLO-compatible** (designed for `--dangerously-skip-permissions`) |
+| | - Official Anthropic support and maintenance |
+| | - Built-in network firewall (allowlist-based) |
+| | - Pre-configured with all necessary tools |
+| | - No code changes to Claude CLI needed |
+| | - Consistent environment across platforms |
+| **Cons** | - Requires Docker installation |
+| | - Container startup latency (~1-3s) |
+| | - Image download on first use (~500MB-1GB) |
+| | - Network isolation may break some workflows |
+| **Platform Compatibility** | Linux (native), macOS (Docker Desktop), Windows (Docker Desktop/WSL2) |
+| **Risk Reduction** | **HIGH** - Container isolation + network firewall |
+| **Implementation Feasibility** | **HIGH** - Official image, minimal code changes |
+| **Performance Impact** | Low - ~5% overhead, 1-3s startup |
+| **UX Impact** | Low - Just needs Docker installed |
+
+**References:**
+- [Claude Code DevContainer Docs](https://code.claude.com/docs/en/devcontainer)
+- [GitHub: anthropics/claude-code/.devcontainer](https://github.com/anthropics/claude-code/tree/main/.devcontainer)
+
+**Security Note from Anthropic:**
+> While the devcontainer provides substantial protections, no system is completely immune to all attacks. When executed with `--dangerously-skip-permissions`, devcontainers don't prevent a malicious project from exfiltrating anything accessible in the devcontainer including Claude Code credentials. Only use devcontainers when developing with trusted repositories.
+
+### 4.5 gVisor (runsc)
 
 **Overview:** Google's user-space kernel providing defense-in-depth for containers.
 
@@ -384,7 +445,7 @@ docker run --runtime=runsc \
 | **Performance Impact** | Medium-High - Syscall overhead |
 | **UX Impact** | High - Significant setup requirements |
 
-### 4.5 Firejail
+### 4.6 Firejail
 
 **Overview:** SUID sandbox for Linux with profiles for many applications.
 
@@ -415,7 +476,7 @@ firejail --private-tmp \
 | **Performance Impact** | Low |
 | **UX Impact** | Medium on Linux, requires fallback elsewhere |
 
-### 4.6 Windows Sandbox
+### 4.7 Windows Sandbox
 
 **Overview:** Microsoft's disposable desktop environment using Hyper-V.
 
@@ -456,7 +517,7 @@ firejail --private-tmp \
 | **Performance Impact** | Very High - Full VM boot |
 | **UX Impact** | Very High - Long startup, GUI-oriented |
 
-### 4.7 WSL2 Isolation
+### 4.8 WSL2 Isolation
 
 **Overview:** Running sandboxed workloads in Windows Subsystem for Linux 2.
 
@@ -495,60 +556,75 @@ wsl_cmd = [
 
 ### 5.1 Summary Matrix
 
-| Solution | Linux | macOS | Windows | Risk Reduction | Feasibility | Performance | UX Impact |
-|----------|-------|-------|---------|----------------|-------------|-------------|-----------|
-| Docker | Native | Good | WSL2 | High | Medium | Low | Medium |
-| Bubblewrap | Native | No | No | High | Easy (Linux) | Minimal | Low |
-| Claude --sandbox | Yes | Yes | Yes | Medium-High | High | Minimal | Low |
-| gVisor | Native | No | No | Very High | Low | Medium | High |
-| Firejail | Native | No | No | Medium-High | Medium | Low | Medium |
-| Windows Sandbox | No | No | Pro/Ent | Very High | Low | Very High | Very High |
-| WSL2 + Linux tools | No | No | Yes | High | Medium | Low-Medium | Medium |
+| Solution | Linux | macOS | Windows | Risk Reduction | Feasibility | Performance | UX Impact | YOLO Mode |
+|----------|-------|-------|---------|----------------|-------------|-------------|-----------|-----------|
+| **DevContainer** | Native | Good | Good | High | **High** | Low | **Low** | **Yes** |
+| Docker (custom) | Native | Good | WSL2 | High | Medium | Low | Medium | Yes |
+| Bubblewrap | Native | No | No | High | Easy (Linux) | Minimal | Low | Yes |
+| Claude /sandbox | Yes | Yes | **No** | Medium-High | Low | Minimal | Medium | **No (16% prompts)** |
+| gVisor | Native | No | No | Very High | Low | Medium | High | Yes |
+| Firejail | Native | No | No | Medium-High | Medium | Low | Medium | Yes |
+| Windows Sandbox | No | No | Pro/Ent | Very High | Low | Very High | Very High | Yes |
+| WSL2 + Linux tools | No | No | Yes | High | Medium | Low-Medium | Medium | Yes |
+
+**Legend:**
+- **YOLO Mode:** Can run with `--dangerously-skip-permissions` for fully autonomous operation
 
 ### 5.2 Platform-Specific Recommendations
 
-#### Linux Users
+#### All Platforms (Recommended)
+**Primary:** Anthropic DevContainer - cross-platform, YOLO-compatible, officially maintained
+
+#### Linux Users (Alternative)
 **Primary:** Bubblewrap (lightweight, fast, no daemon)
 **Alternative:** Docker (more tooling, easier debugging)
 
-#### macOS Users
-**Primary:** Docker Desktop
-**Alternative:** Claude's native sandbox (if sufficient)
+#### macOS Users (Alternative)
+**Primary:** Docker Desktop with DevContainer
+**Alternative:** Claude's native `/sandbox` (if 16% prompts acceptable)
 
-#### Windows Users
-**Primary:** Docker Desktop with WSL2 backend
+#### Windows Users (Alternative)
+**Primary:** Docker Desktop with DevContainer
 **Alternative:** WSL2 with Bubblewrap
-**Fallback:** Claude's native sandbox
+**Note:** Claude's native `/sandbox` does NOT work on Windows
 
 ---
 
 ## 6. Recommendations
 
-### 6.1 Immediate Actions (Week 1)
+### 6.1 Primary Recommendation: Anthropic DevContainer
 
-#### 6.1.1 Remove `--dangerously-skip-permissions` Default
+**Priority:** Critical
+**Effort:** Low-Medium
+**Risk Reduction:** High
+
+The Anthropic DevContainer is the recommended solution because it:
+1. Works on all platforms (Linux, macOS, Windows)
+2. Supports fully autonomous YOLO mode (`--dangerously-skip-permissions`)
+3. Is officially maintained by Anthropic
+4. Includes built-in network firewall
+5. Requires minimal code changes to Debussy
+
+**See:** [DEVCONTAINER_SANDBOX_PLAN.md](./DEVCONTAINER_SANDBOX_PLAN.md) for implementation details.
+
+### 6.2 Immediate Actions
+
+#### 6.2.1 Add `sandbox_mode` Configuration
 
 **Priority:** Critical
 **Effort:** Low
-**Risk Reduction:** Medium
-
-The flag should not be hardcoded. Instead, make it configurable:
 
 ```python
 # config.py - Add new option
 class Config(BaseModel):
     # ... existing fields ...
-    skip_permissions: bool = Field(
-        default=False,  # CHANGED FROM TRUE
-        description="Skip Claude permission prompts (DANGEROUS - use sandboxing instead)"
-    )
-    sandbox_mode: Literal["none", "native", "docker", "bwrap"] = Field(
-        default="native",
-        description="Sandboxing mode for Claude sessions"
+    sandbox_mode: Literal["none", "devcontainer"] = Field(
+        default="none",
+        description="Sandboxing mode: 'none' (current behavior) or 'devcontainer' (Docker isolation)"
     )
 ```
 
-#### 6.1.2 Document Security Warnings
+#### 6.2.2 Document Security Warnings
 
 Add prominent warnings to README and CLI:
 
@@ -556,10 +632,11 @@ Add prominent warnings to README and CLI:
 WARNING: Running Claude Code without sandboxing allows unrestricted
 file system access and command execution. Use at your own risk.
 
-Recommended: Enable sandboxing with --sandbox-mode docker
+Recommended: Enable sandboxing with --sandbox-mode devcontainer
+Requires: Docker Desktop installed
 ```
 
-#### 6.1.3 Restrict State Database Location
+#### 6.2.3 Restrict State Database Location
 
 Move state.db outside the project directory to prevent manipulation:
 
@@ -569,65 +646,68 @@ def get_orchestrator_dir(project_root: Path | None = None) -> Path:
     return Path.home() / ".debussy" / "state"
 ```
 
-### 6.2 Short-Term Actions (Weeks 2-4)
+### 6.3 DevContainer Implementation
 
-#### 6.2.1 Implement Claude Native Sandbox Mode
+#### 6.3.1 Implement DevContainer Sandbox Mode
 
-Investigate and implement support for Claude's `--sandbox` flag:
-
-```python
-async def execute_phase(self, phase: Phase, ...) -> ExecutionResult:
-    args = [
-        self.claude_command,
-        "--print",
-        "--verbose",
-        "--output-format", "stream-json",
-        "--model", self.model,
-    ]
-
-    if self.config.sandbox_mode == "native":
-        args.extend(["--sandbox", "--allowed-paths", str(self.project_root)])
-    elif self.config.skip_permissions:
-        args.append("--dangerously-skip-permissions")
-
-    args.extend(["-p", prompt])
-    # ...
-```
-
-#### 6.2.2 Implement Docker Sandbox Mode
-
-Add Docker-based execution for platforms that support it:
+Wrap Claude CLI execution in Docker when enabled:
 
 ```python
-async def _execute_in_docker(self, phase: Phase, prompt: str) -> ExecutionResult:
-    docker_args = [
-        "docker", "run", "--rm",
-        "--network=none",
-        "--read-only",
-        "--tmpfs=/tmp:rw,noexec,size=100m",
-        "-v", f"{self.project_root}:/workspace:rw",
-        "-w", "/workspace",
-        "--memory=4g",
-        "--cpus=2",
-        "--user", f"{os.getuid()}:{os.getgid()}",
-        "--security-opt=no-new-privileges",
-        "claude-debussy-sandbox:latest",
-        "claude", "--dangerously-skip-permissions",
-        "--output-format", "stream-json",
-        "-p", prompt
-    ]
-    # ...
+async def _build_command(self, prompt: str) -> list[str]:
+    if self.config.sandbox_mode == "devcontainer":
+        return [
+            "docker", "run", "--rm", "-i",
+            "-v", f"{self.project_root}:/workspace:rw",
+            "-w", "/workspace",
+            "-e", f"ANTHROPIC_API_KEY={os.environ.get('ANTHROPIC_API_KEY', '')}",
+            "ghcr.io/anthropics/claude-code:latest",  # Official image
+            "claude", "--dangerously-skip-permissions",
+            "--print", "--verbose",
+            "--output-format", "stream-json",
+            "--model", self.model,
+            "-p", prompt
+        ]
+    else:
+        return [
+            self.claude_command,
+            "--dangerously-skip-permissions",
+            "--print", "--verbose",
+            "--output-format", "stream-json",
+            "--model", self.model,
+            "-p", prompt
+        ]
 ```
 
-#### 6.2.3 Create Docker Image
+#### 6.3.2 Docker Availability Check
 
-Dockerfile for sandbox environment:
+```python
+def _check_docker_available(self) -> bool:
+    """Check if Docker is installed and running."""
+    import shutil
+    import subprocess
+
+    if not shutil.which("docker"):
+        return False
+    try:
+        result = subprocess.run(
+            ["docker", "info"],
+            capture_output=True,
+            timeout=5
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+```
+
+### 6.4 Alternative: Custom Docker Image (Optional)
+
+If the official DevContainer doesn't meet specific needs:
 
 ```dockerfile
-FROM python:3.12-slim
+FROM node:20-slim
 
 # Install Claude CLI
-RUN pip install claude-cli
+RUN npm install -g @anthropic-ai/claude-code
 
 # Create non-root user
 RUN useradd -m -u 1000 sandbox
@@ -638,63 +718,15 @@ WORKDIR /workspace
 ENTRYPOINT ["claude"]
 ```
 
-### 6.3 Medium-Term Actions (Months 1-2)
+### 6.5 Future Enhancements (Optional)
 
-#### 6.3.1 Implement Bubblewrap Support (Linux)
+These are lower-priority enhancements that could be added after DevContainer support is stable:
 
-```python
-async def _execute_in_bwrap(self, phase: Phase, prompt: str) -> ExecutionResult:
-    bwrap_args = [
-        "bwrap",
-        "--ro-bind", "/usr", "/usr",
-        "--ro-bind", "/bin", "/bin",
-        "--ro-bind", "/lib", "/lib",
-        "--ro-bind", "/lib64", "/lib64",
-        "--symlink", "/usr/lib64/ld-linux-x86-64.so.2", "/lib64/ld-linux-x86-64.so.2",
-        "--bind", str(self.project_root), "/workspace",
-        "--tmpfs", "/tmp",
-        "--proc", "/proc",
-        "--dev", "/dev",
-        "--unshare-all",
-        "--share-net",  # Optional: can disable
-        "--die-with-parent",
-        "--new-session",
-        "--chdir", "/workspace",
-        "claude", "--dangerously-skip-permissions",
-        "--output-format", "stream-json",
-        "-p", prompt
-    ]
-    # ...
-```
+#### 6.5.1 Bubblewrap Support (Linux-only)
 
-#### 6.3.2 Platform Detection and Automatic Sandbox Selection
+For Linux users who want lighter-weight isolation without Docker overhead.
 
-```python
-def _select_sandbox_mode(self) -> str:
-    """Auto-select best available sandbox for current platform."""
-    import platform
-    import shutil
-
-    system = platform.system()
-
-    if system == "Linux":
-        if shutil.which("bwrap"):
-            return "bwrap"
-        if shutil.which("docker"):
-            return "docker"
-    elif system == "Darwin":  # macOS
-        if shutil.which("docker"):
-            return "docker"
-    elif system == "Windows":
-        # Check for Docker with WSL2
-        if shutil.which("docker"):
-            return "docker"
-
-    # Fallback to native Claude sandbox
-    return "native"
-```
-
-#### 6.3.3 Implement Output Sanitization
+#### 6.5.2 Output Sanitization
 
 Add filtering for sensitive data in Claude's output:
 
@@ -702,113 +734,49 @@ Add filtering for sensitive data in Claude's output:
 SENSITIVE_PATTERNS = [
     r'-----BEGIN.*PRIVATE KEY-----',
     r'AKIA[0-9A-Z]{16}',  # AWS Access Key
-    r'sk-[a-zA-Z0-9]{48}',  # OpenAI API Key
     r'ghp_[a-zA-Z0-9]{36}',  # GitHub Token
-    # ... more patterns
 ]
-
-def sanitize_output(self, text: str) -> str:
-    for pattern in SENSITIVE_PATTERNS:
-        text = re.sub(pattern, '[REDACTED]', text)
-    return text
 ```
 
-### 6.4 Long-Term Actions (Months 3-6)
+#### 6.5.3 Audit Logging
 
-#### 6.4.1 Implement Network Allowlisting
+Log all file/command operations for forensic analysis.
 
-```yaml
-# .debussy/config.yaml
-network:
-  mode: allowlist  # none, allowlist, full
-  allowed_hosts:
-    - pypi.org
-    - github.com
-    - api.anthropic.com
-```
+#### 6.5.4 Capability-Based Permissions
 
-#### 6.4.2 Implement Audit Logging
-
-```python
-class AuditLogger:
-    def log_operation(self,
-                      operation: str,
-                      target: str,
-                      phase_id: str,
-                      result: str):
-        """Log all file/command operations for forensic analysis."""
-        entry = {
-            "timestamp": datetime.utcnow().isoformat(),
-            "operation": operation,  # read, write, execute, network
-            "target": target,
-            "phase_id": phase_id,
-            "result": result,
-            "sandbox_mode": self.sandbox_mode
-        }
-        # Write to append-only log
-        self._append_audit_log(entry)
-```
-
-#### 6.4.3 Implement Capability-Based Permissions
-
-```yaml
-# Phase file can specify required capabilities
-## Capabilities
-- file:read:/src/**
-- file:write:/src/**
-- file:write:/tests/**
-- command:pytest
-- command:ruff
-- network:none
-```
+Allow phase files to declare required capabilities.
 
 ---
 
 ## 7. Implementation Roadmap
 
-### Phase 1: Foundation (Week 1-2)
+### Phase 1: DevContainer Prototype
 
-| Task | Priority | Effort | Owner |
-|------|----------|--------|-------|
-| Make `--dangerously-skip-permissions` configurable | P0 | 2h | - |
-| Add security warnings to documentation | P0 | 1h | - |
-| Move state.db to user home directory | P1 | 4h | - |
-| Add `sandbox_mode` config option | P1 | 2h | - |
+| Task | Priority | Effort |
+|------|----------|--------|
+| Add `sandbox_mode` config option | P0 | 2h |
+| Implement Docker availability check | P0 | 1h |
+| Wrap Claude execution in `docker run` | P0 | 4h |
+| Add `--sandbox` CLI flag | P1 | 1h |
+| Test on Windows, macOS, Linux | P0 | 4h |
 
-### Phase 2: Native Sandbox (Week 3-4)
+**See:** [DEVCONTAINER_SANDBOX_PLAN.md](./DEVCONTAINER_SANDBOX_PLAN.md)
 
-| Task | Priority | Effort | Owner |
-|------|----------|--------|-------|
-| Research Claude `--sandbox` capabilities | P0 | 4h | - |
-| Implement native sandbox mode | P0 | 8h | - |
-| Update tests for sandbox mode | P1 | 4h | - |
-| Document sandbox mode usage | P1 | 2h | - |
+### Phase 2: Hardening
 
-### Phase 3: Docker Sandbox (Week 5-8)
+| Task | Priority | Effort |
+|------|----------|--------|
+| Add security warnings to documentation | P1 | 1h |
+| Move state.db to user home directory | P2 | 4h |
+| Graceful fallback when Docker unavailable | P1 | 2h |
 
-| Task | Priority | Effort | Owner |
-|------|----------|--------|-------|
-| Create Dockerfile for sandbox | P1 | 4h | - |
-| Implement Docker execution path | P1 | 12h | - |
-| Add Docker health checks | P2 | 4h | - |
-| Cross-platform testing | P1 | 8h | - |
+### Phase 3: Future Enhancements (Optional)
 
-### Phase 4: Linux-Specific (Week 9-12)
-
-| Task | Priority | Effort | Owner |
-|------|----------|--------|-------|
-| Implement Bubblewrap support | P2 | 8h | - |
-| Platform auto-detection | P1 | 4h | - |
-| Integration testing | P1 | 8h | - |
-
-### Phase 5: Hardening (Ongoing)
-
-| Task | Priority | Effort | Owner |
-|------|----------|--------|-------|
-| Output sanitization | P2 | 8h | - |
-| Audit logging | P2 | 12h | - |
-| Network allowlisting | P3 | 16h | - |
-| Capability-based permissions | P3 | 20h | - |
+| Task | Priority | Effort |
+|------|----------|--------|
+| Bubblewrap support (Linux) | P3 | 8h |
+| Output sanitization | P3 | 4h |
+| Audit logging | P3 | 8h |
 
 ---
 
