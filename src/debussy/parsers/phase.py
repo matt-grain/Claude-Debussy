@@ -107,16 +107,15 @@ def _parse_dependencies(content: str) -> list[str]:
     deps: list[str] = []
 
     # Look for "Depends On:" field with phase links
-    dep_match = re.search(r"\*\*Depends On:\*\*\s*\[Phase\s+(\d+)\]", content)
+    # Phase IDs can be integers (1, 2, 3) or decimals (3.1, 3.2)
+    dep_match = re.search(r"\*\*Depends On:\*\*\s*\[?Phase\s+(\d+(?:\.\d+)?)\]?", content)
     if dep_match:
         deps.append(dep_match.group(1))
 
     # Also check dependency section
-    dep_section = re.search(
-        r"## Dependencies\s*\n(.*?)(?=\n##|\Z)", content, re.DOTALL | re.IGNORECASE
-    )
+    dep_section = re.search(r"## Dependencies\s*\n(.*?)(?=\n##|\Z)", content, re.DOTALL | re.IGNORECASE)
     if dep_section:
-        phase_refs = re.findall(r"Phase\s+(\d+)", dep_section.group(1))
+        phase_refs = re.findall(r"Phase\s+(\d+(?:\.\d+)?)", dep_section.group(1))
         deps.extend(phase_refs)
 
     return list(set(deps))  # Deduplicate
@@ -219,9 +218,7 @@ def _parse_required_steps(content: str) -> list[str]:
     steps: list[str] = []
 
     # Find Process Wrapper section
-    wrapper_section = re.search(
-        r"## Process Wrapper.*?\n(.*?)(?=\n##|\Z)", content, re.DOTALL | re.IGNORECASE
-    )
+    wrapper_section = re.search(r"## Process Wrapper.*?\n(.*?)(?=\n##|\Z)", content, re.DOTALL | re.IGNORECASE)
     if not wrapper_section:
         return steps
 

@@ -511,9 +511,13 @@ class ClaudeRunner:
 
     def _build_subprocess_kwargs(self) -> dict:
         """Build kwargs for asyncio.create_subprocess_exec."""
+        # Increase line limit from default 64KB to 2MB to handle large tool results
+        # (e.g., Claude reading files that get base64 encoded in JSON)
+        line_limit = 2 * 1024 * 1024  # 2MB
         kwargs: dict = {
             "stdout": asyncio.subprocess.PIPE,
             "stderr": asyncio.subprocess.PIPE,
+            "limit": line_limit,
         }
         # For Docker, don't set cwd (container has its own /workspace)
         if self._sandbox_mode != "devcontainer":

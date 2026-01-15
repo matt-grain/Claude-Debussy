@@ -47,8 +47,9 @@ def _parse_phases_table(content: str, base_dir: Path) -> list[Phase]:
 
     # Find table with Phase column
     # Match table rows: | 1 | [Title](path.md) | Focus | Risk | Status |
+    # Phase IDs can be integers (1, 2, 3) or decimals (3.1, 3.2)
     table_pattern = re.compile(
-        r"^\|\s*(\d+)\s*\|"  # Phase number
+        r"^\|\s*(\d+(?:\.\d+)?)\s*\|"  # Phase number (int or decimal)
         r"\s*\[([^\]]+)\]\(([^)]+)\)\s*\|"  # [Title](path.md)
         r"\s*[^|]*\|"  # Focus (skip)
         r"\s*[^|]*\|"  # Risk (skip)
