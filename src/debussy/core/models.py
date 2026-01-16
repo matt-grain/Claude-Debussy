@@ -220,3 +220,77 @@ class CompletedFeature(BaseModel):
     completed_at: datetime
     issues: list[IssueRef]
     plan_path: Path
+
+
+# =============================================================================
+# Issue Sync Models
+# =============================================================================
+
+
+class IssueStatus(BaseModel):
+    """Current status of an issue from an external tracker."""
+
+    id: str = Field(description="Issue identifier (e.g., '10' for GitHub, 'PROJ-123' for Jira)")
+    platform: Literal["github", "jira"]
+    state: str = Field(description="Current state (e.g., 'open', 'closed' for GitHub; 'In Progress', 'Done' for Jira)")
+    labels: list[str] = Field(default_factory=list)
+    milestone: str | None = None
+    last_updated: datetime | None = None
+
+
+class DriftType(str, Enum):
+    """Types of state drift between Debussy and external trackers."""
+
+    LABEL_MISMATCH = "label_mismatch"  # Debussy labels don't match tracker
+    STATUS_MISMATCH = "status_mismatch"  # Expected vs actual state differs
+    CLOSED_EXTERNALLY = "closed_externally"  # Tracker shows closed, Debussy expects open
+    REOPENED_EXTERNALLY = "reopened_externally"  # Tracker shows open, Debussy expects closed
+
+
+class DriftReport(BaseModel):
+    """Report of state drift for a single issue."""
+
+    issue_id: str = Field(description="Issue identifier")
+    platform: Literal["github", "jira"]
+    expected_state: str = Field(description="State Debussy expects based on phase status")
+    actual_state: str = Field(description="Current state in the tracker")
+    drift_type: DriftType
+    debussy_timestamp: datetime | None = Field(
+        default=None,
+        description="When Debussy last synced this issue",
+    )
+    tracker_timestamp: datetime | None = Field(
+        default=None,
+        description="When the tracker was last updated",
+    )
+    debussy_is_newer: bool | None = Field(
+        default=None,
+        description="True if Debussy state is more recent than tracker",
+    )
+
+
+class SyncDirection(str, Enum):
+    """Direction for state reconciliation."""
+
+    FROM_TRACKER = "from-tracker"  # Treat tracker as source of truth (default)
+    TO_TRACKER = "to-tracker"  # Push Debussy state to tracker
+
+
+class ReconciliationAction(BaseModel):
+    """A proposed action to reconcile state drift."""
+
+    issue_id: str
+    platform: Literal["github", "jira"]
+    action: Literal["update_phase_status", "update_issue_status", "update_labels"]
+    description: str
+    from_value: str
+    to_value: str
+
+
+class ReconciliationPlan(BaseModel):
+    """Plan for reconciling state drift."""
+
+    direction: SyncDirection
+    actions: list[ReconciliationAction] = Field(default_factory=list)
+    drift_reports: list[DriftReport] = Field(default_factory=list)
+    total_drift_count: int = 0
