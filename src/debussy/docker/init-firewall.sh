@@ -65,8 +65,18 @@ for ip in $(dig +short registry.npmjs.org 2>/dev/null || true); do
     add_to_ipset allowed_hosts "$ip"
 done
 
-# Anthropic API
+# Anthropic API and OAuth endpoints
 for ip in $(dig +short api.anthropic.com 2>/dev/null || true); do
+    add_to_ipset allowed_hosts "$ip"
+done
+for ip in $(dig +short console.anthropic.com 2>/dev/null || true); do
+    add_to_ipset allowed_hosts "$ip"
+done
+for ip in $(dig +short claude.ai 2>/dev/null || true); do
+    add_to_ipset allowed_hosts "$ip"
+done
+# Statsig (Claude Code telemetry)
+for ip in $(dig +short api.statsig.com 2>/dev/null || true); do
     add_to_ipset allowed_hosts "$ip"
 done
 
