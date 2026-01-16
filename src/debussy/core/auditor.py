@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -12,20 +13,59 @@ from debussy.parsers.phase import parse_phase
 if TYPE_CHECKING:
     from debussy.core.models import MasterPlan, Phase
 
+# Built-in agents provided by Claude Code's Task tool
+# Update this list when the Task tool's available agents change
+BUILTIN_AGENTS: frozenset[str] = frozenset(
+    {
+        "Bash",
+        "general-purpose",
+        "statusline-setup",
+        "Explore",
+        "Plan",
+        "claude-code-guide",
+        "debussy",
+        "llm-security-expert",
+        "python-task-validator",
+        "textual-tui-expert",
+    }
+)
+
+# Patterns to detect agent references in phase files
+# Pattern 1: **AGENT:agent-name** in Process Wrapper
+AGENT_MARKER_PATTERN = re.compile(r"\*\*AGENT:([a-zA-Z0-9_-]+)\*\*", re.IGNORECASE)
+# Pattern 2: subagent_type: agent-name (YAML-style)
+SUBAGENT_YAML_PATTERN = re.compile(r"subagent_type:\s*([a-zA-Z0-9_-]+)", re.IGNORECASE)
+# Pattern 3: subagent_type="agent-name" or subagent_type='agent-name' (JSON-style)
+SUBAGENT_JSON_PATTERN = re.compile(r'subagent_type\s*[=:]\s*["\']([a-zA-Z0-9_-]+)["\']', re.IGNORECASE)
+
 
 class PlanAuditor:
     """Auditor for validating plan structure deterministically."""
 
-    def audit(self, master_plan_path: Path) -> AuditResult:
+    def __init__(self, agents_dir: Path | None = None) -> None:
+        """Initialize the auditor.
+
+        Args:
+            agents_dir: Path to the custom agents directory.
+                       Defaults to .claude/agents/ relative to master plan.
+        """
+        self._agents_dir = agents_dir
+        self._cached_agents: set[str] | None = None
+        self._detected_agents: dict[str, list[str]] = {}  # agent -> list of phase paths
+
+    def audit(self, master_plan_path: Path, verbose: bool = False) -> AuditResult:
         """Run all audit checks on a master plan.
 
         Args:
             master_plan_path: Path to the master plan markdown file.
+            verbose: If True, include extra information in the result.
 
         Returns:
             AuditResult with pass/fail and list of issues.
         """
         issues: list[AuditIssue] = []
+        self._detected_agents = {}  # Reset for each audit run
+        self._cached_agents = None  # Reset cache for each run
 
         # Check master plan exists and can be parsed
         try:
@@ -113,6 +153,10 @@ class PlanAuditor:
 
         # Check dependency graph
         issues.extend(self._check_dependencies(parsed_phases))
+
+        # Check custom agent references exist
+        agents_dir = self._agents_dir or master_plan_path.parent / ".claude" / "agents"
+        issues.extend(self._check_custom_agents(parsed_phases, agents_dir, verbose))
 
         # Calculate summary
         errors = sum(1 for i in issues if i.severity == AuditSeverity.ERROR)
@@ -335,3 +379,139 @@ class PlanAuditor:
                     break  # Only report first cycle found
 
         return issues
+
+    def _extract_agent_references(self, content: str) -> set[str]:
+        """Extract all agent references from phase file content.
+
+        Detects agents referenced via:
+        - **AGENT:agent-name** markers in Process Wrapper
+        - subagent_type: agent-name (YAML-style)
+        - subagent_type="agent-name" or subagent_type='agent-name' (JSON-style)
+
+        Args:
+            content: The phase file content.
+
+        Returns:
+            Set of agent names referenced in the content.
+        """
+        agents: set[str] = set()
+
+        # Find **AGENT:xxx** markers
+        for match in AGENT_MARKER_PATTERN.finditer(content):
+            agents.add(match.group(1))
+
+        # Find subagent_type: xxx (YAML-style)
+        for match in SUBAGENT_YAML_PATTERN.finditer(content):
+            agents.add(match.group(1))
+
+        # Find subagent_type="xxx" or subagent_type='xxx' (JSON-style)
+        for match in SUBAGENT_JSON_PATTERN.finditer(content):
+            agents.add(match.group(1))
+
+        return agents
+
+    def _scan_agents_directory(self, agents_dir: Path) -> set[str]:
+        """Scan the agents directory for available custom agents.
+
+        Caches the result for performance during a single audit run.
+
+        Args:
+            agents_dir: Path to the .claude/agents/ directory.
+
+        Returns:
+            Set of available agent names (without .md extension).
+        """
+        if self._cached_agents is not None:
+            return self._cached_agents
+
+        agents: set[str] = set()
+
+        if agents_dir.exists() and agents_dir.is_dir():
+            for agent_file in agents_dir.glob("*.md"):
+                # Agent name is the filename without .md extension
+                agents.add(agent_file.stem)
+
+        self._cached_agents = agents
+        return agents
+
+    def _check_custom_agents(
+        self,
+        phases: list[Phase],
+        agents_dir: Path,
+        verbose: bool = False,
+    ) -> list[AuditIssue]:
+        """Check that all referenced custom agents exist.
+
+        Args:
+            phases: List of parsed phases.
+            agents_dir: Path to the .claude/agents/ directory.
+            verbose: If True, report all detected agent references as INFO.
+
+        Returns:
+            List of audit issues for missing agents.
+        """
+        issues: list[AuditIssue] = []
+
+        # Collect all agent references from all phases
+        for phase in phases:
+            if not phase.path.exists():
+                continue
+
+            content = phase.path.read_text(encoding="utf-8")
+            agents = self._extract_agent_references(content)
+
+            # Track which phases reference each agent
+            for agent in agents:
+                if agent not in self._detected_agents:
+                    self._detected_agents[agent] = []
+                self._detected_agents[agent].append(str(phase.path.name))
+
+        # Get available custom agents
+        available_agents = self._scan_agents_directory(agents_dir)
+
+        # Check each referenced agent
+        for agent, phase_files in sorted(self._detected_agents.items()):
+            # Skip built-in agents (case-insensitive comparison)
+            if agent.lower() in {b.lower() for b in BUILTIN_AGENTS}:
+                if verbose:
+                    issues.append(
+                        AuditIssue(
+                            severity=AuditSeverity.INFO,
+                            code="BUILTIN_AGENT",
+                            message=f"Built-in agent '{agent}' referenced in: {', '.join(phase_files)}",
+                            location=None,
+                        )
+                    )
+                continue
+
+            # Check if custom agent exists
+            if agent not in available_agents:
+                expected_path = agents_dir / f"{agent}.md"
+                issues.append(
+                    AuditIssue(
+                        severity=AuditSeverity.ERROR,
+                        code="MISSING_AGENT",
+                        message=f"Missing custom agent '{agent}'",
+                        location=f"Referenced in: {', '.join(phase_files)}",
+                        suggestion=f"Create the agent file at: {expected_path}",
+                    )
+                )
+            elif verbose:
+                issues.append(
+                    AuditIssue(
+                        severity=AuditSeverity.INFO,
+                        code="CUSTOM_AGENT",
+                        message=f"Custom agent '{agent}' found in: {', '.join(phase_files)}",
+                        location=str(agents_dir / f"{agent}.md"),
+                    )
+                )
+
+        return issues
+
+    def get_detected_agents(self) -> dict[str, list[str]]:
+        """Get all detected agent references from the last audit.
+
+        Returns:
+            Dict mapping agent names to lists of phase file names.
+        """
+        return dict(self._detected_agents)
