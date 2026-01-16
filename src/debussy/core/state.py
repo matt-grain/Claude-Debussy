@@ -6,13 +6,15 @@ import json
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from debussy.core.models import (
+    CompletedFeature,
     CompletionSignal,
     GateResult,
+    IssueRef,
     MasterPlan,
     PhaseExecution,
     PhaseStatus,
@@ -74,6 +76,14 @@ CREATE TABLE IF NOT EXISTS progress_log (
     phase_id TEXT NOT NULL,
     step TEXT NOT NULL,
     logged_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS completed_features (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    completed_at TIMESTAMP NOT NULL,
+    issues_json TEXT NOT NULL,
+    plan_path TEXT NOT NULL
 );
 """
 
@@ -513,6 +523,139 @@ class StateManager:
             ).fetchall()
 
             return {r["phase_id"] for r in rows}
+
+    # =========================================================================
+    # Completed Features Tracking
+    # =========================================================================
+
+    def record_completion(
+        self,
+        name: str,
+        issues: list[IssueRef],
+        plan_path: Path,
+    ) -> int:
+        """Record a completed feature with its linked issues.
+
+        Args:
+            name: Feature name (usually from plan title or file path)
+            issues: List of issue references (GitHub/Jira)
+            plan_path: Path to the master plan file
+
+        Returns:
+            The ID of the created record
+        """
+
+        now = datetime.now(UTC).isoformat()
+        issues_json = json.dumps([issue.model_dump() for issue in issues])
+
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO completed_features (name, completed_at, issues_json, plan_path)
+                VALUES (?, ?, ?, ?)
+                """,
+                (name, now, issues_json, str(plan_path)),
+            )
+            return cursor.lastrowid or 0
+
+    def find_completed_features(self, issue_ids: list[IssueRef]) -> list[CompletedFeature]:
+        """Find completed features that include any of the given issue IDs.
+
+        Args:
+            issue_ids: List of issue references to search for
+
+        Returns:
+            List of CompletedFeature records that match any of the issues
+        """
+        if not issue_ids:
+            return []
+
+        with self._connection() as conn:
+            rows = conn.execute("SELECT * FROM completed_features ORDER BY completed_at DESC").fetchall()
+
+            # Filter in Python since SQLite JSON support varies
+            matches: list[CompletedFeature] = []
+            search_set = {(issue.type, issue.id) for issue in issue_ids}
+
+            for row in rows:
+                try:
+                    issues_data = json.loads(row["issues_json"])
+                    issues = [IssueRef(**item) for item in issues_data]
+
+                    # Check if any issue matches
+                    feature_set = {(issue.type, issue.id) for issue in issues}
+                    if search_set & feature_set:
+                        matches.append(
+                            CompletedFeature(
+                                id=row["id"],
+                                name=row["name"],
+                                completed_at=datetime.fromisoformat(row["completed_at"]),
+                                issues=issues,
+                                plan_path=Path(row["plan_path"]),
+                            )
+                        )
+                except (json.JSONDecodeError, KeyError, ValueError):
+                    # Skip corrupted records
+                    continue
+
+            return matches
+
+    def get_completion_details(self, feature_id: int) -> CompletedFeature | None:
+        """Get details of a completed feature by ID.
+
+        Args:
+            feature_id: The feature ID to retrieve
+
+        Returns:
+            CompletedFeature if found, None otherwise
+        """
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM completed_features WHERE id = ?",
+                (feature_id,),
+            ).fetchone()
+
+            if row is None:
+                return None
+
+            try:
+                issues_data = json.loads(row["issues_json"])
+                issues = [IssueRef(**item) for item in issues_data]
+
+                return CompletedFeature(
+                    id=row["id"],
+                    name=row["name"],
+                    completed_at=datetime.fromisoformat(row["completed_at"]),
+                    issues=issues,
+                    plan_path=Path(row["plan_path"]),
+                )
+            except (json.JSONDecodeError, KeyError, ValueError):
+                return None
+
+    def validate_issues_json(self, issues_json: str) -> bool:
+        """Validate that issues_json is a valid JSON array of IssueRef objects.
+
+        Args:
+            issues_json: JSON string to validate
+
+        Returns:
+            True if valid, False otherwise
+        """
+        try:
+            data = json.loads(issues_json)
+            if not isinstance(data, list):
+                return False
+            for item in data:
+                # Validate required fields
+                if not isinstance(item, dict):
+                    return False
+                if "type" not in item or "id" not in item:
+                    return False
+                if item["type"] not in ("github", "jira"):
+                    return False
+            return True
+        except (json.JSONDecodeError, TypeError):
+            return False
 
 
 def _parse_datetime(value: str | None) -> datetime | None:

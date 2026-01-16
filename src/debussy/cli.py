@@ -1525,16 +1525,25 @@ def plan_from_issues(
         bool,
         typer.Option("--verbose", "-v", help="Enable verbose output"),
     ] = False,
+    force: Annotated[
+        bool,
+        typer.Option("--force", "-f", help="Bypass completion check confirmation"),
+    ] = False,
 ) -> None:
     """Generate Debussy plans from GitHub issues.
 
     Fetches issues, analyzes them for gaps, conducts optional Q&A,
     generates structured plans, and validates with audit.
 
+    If any issues were part of a previously completed feature,
+    you will be prompted to confirm before regenerating.
+    Use --force to bypass this check.
+
     Examples:
         debussy plan-from-issues --milestone "v2.0"
         debussy plan-from-issues --label feature --label auth
         debussy plan-from-issues --source gh --skip-qa
+        debussy plan-from-issues --milestone "v1.0" --force  # bypass completion check
     """
     from debussy.planners.command import plan_from_issues as do_plan_from_issues
 
@@ -1556,6 +1565,7 @@ def plan_from_issues(
         timeout=timeout,
         verbose=verbose,
         console=console,
+        force=force,
     )
 
     if not result.success:

@@ -197,3 +197,26 @@ class RunState(BaseModel):
     status: RunStatus
     current_phase: str | None = None
     phase_executions: list[PhaseExecution] = Field(default_factory=list)
+
+
+# =============================================================================
+# Completion Tracking Models
+# =============================================================================
+
+
+class IssueRef(BaseModel):
+    """Reference to an issue (GitHub or Jira)."""
+
+    type: Literal["github", "jira"]
+    id: str
+    """Issue ID: number for GitHub (e.g., '10'), key for Jira (e.g., 'PROJ-123')"""
+
+
+class CompletedFeature(BaseModel):
+    """Record of a completed feature with linked issues."""
+
+    id: int | None = None
+    name: str
+    completed_at: datetime
+    issues: list[IssueRef]
+    plan_path: Path

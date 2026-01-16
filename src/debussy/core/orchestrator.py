@@ -406,6 +406,9 @@ class Orchestrator:
                 "All phases completed successfully",
             )
 
+            # Record feature completion for re-run protection
+            self._record_feature_completion()
+
             # GitHub sync: auto-close issues if enabled
             if self._github_sync:
                 try:
@@ -505,6 +508,64 @@ class Orchestrator:
             "Gates": ", ".join(g.name for g in phase.gates) if phase.gates else "None",
         }
         self.ui.show_status_popup(details)
+
+    def _record_feature_completion(self) -> None:
+        """Record feature completion for re-run protection.
+
+        Extracts linked issues from the plan metadata and stores them
+        in the completed_features table for future detection.
+        """
+        if self.plan is None:
+            return
+
+        from debussy.core.models import IssueRef
+
+        # Extract issues from plan metadata
+        issues: list[IssueRef] = []
+
+        # GitHub issues
+        if self.plan.github_issues:
+            if isinstance(self.plan.github_issues, list):
+                for issue_num in self.plan.github_issues:
+                    issues.append(IssueRef(type="github", id=str(issue_num)))
+            elif isinstance(self.plan.github_issues, str):
+                # Parse comma-separated format: "#10, #11" or "10, 11"
+                import re
+
+                for match in re.findall(r"#?(\d+)", self.plan.github_issues):
+                    issues.append(IssueRef(type="github", id=match))
+
+        # Jira issues
+        if self.plan.jira_issues:
+            if isinstance(self.plan.jira_issues, list):
+                for issue_key in self.plan.jira_issues:
+                    issues.append(IssueRef(type="jira", id=issue_key))
+            elif isinstance(self.plan.jira_issues, str):
+                # Parse comma-separated format: "PROJ-123, PROJ-124"
+                import re
+
+                for match in re.findall(r"([A-Z]+-\d+)", self.plan.jira_issues):
+                    issues.append(IssueRef(type="jira", id=match))
+
+        # Skip if no issues linked
+        if not issues:
+            logger.debug("No issues linked in plan - skipping completion recording")
+            return
+
+        # Extract feature name from plan
+        feature_name = self.plan.name or self.master_plan_path.stem
+
+        # Record completion
+        try:
+            feature_id = self.state.record_completion(
+                name=feature_name,
+                issues=issues,
+                plan_path=self.master_plan_path,
+            )
+            logger.info(f"Recorded feature completion: {feature_name} (ID: {feature_id})")
+            self.ui.log_raw(f"[dim]Feature recorded: {feature_name} ({len(issues)} issues)[/dim]")
+        except Exception as e:
+            logger.warning(f"Failed to record feature completion: {e}")
 
     async def _execute_phase_internal(
         self,

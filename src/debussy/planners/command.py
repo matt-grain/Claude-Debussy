@@ -41,6 +41,8 @@ class PlanFromIssuesResult:
     gaps_found: int = 0
     questions_asked: int = 0
     error_message: str | None = None
+    completed_features_found: int = 0
+    user_aborted: bool = False
 
 
 def plan_from_issues(
@@ -55,6 +57,7 @@ def plan_from_issues(
     timeout: int = 300,
     verbose: bool = False,
     console: Console | None = None,
+    force: bool = False,
 ) -> PlanFromIssuesResult:
     """Generate plans from GitHub issues.
 
@@ -72,6 +75,7 @@ def plan_from_issues(
         timeout: Timeout for Claude calls in seconds.
         verbose: Enable verbose output.
         console: Rich console for output.
+        force: Bypass completion check confirmation.
 
     Returns:
         PlanFromIssuesResult with success status and created files.
@@ -111,6 +115,23 @@ def plan_from_issues(
         result.error_message = f"Fetch failed: {e}"
         console.print(f"[red]Error:[/red] Fetch failed: {e}")
         return result
+
+    # Phase 1.5: COMPLETION CHECK
+    completed_features = _check_completed_features(issues, console, verbose)
+    result.completed_features_found = len(completed_features)
+
+    if completed_features and not force:
+        # Show warning and prompt for confirmation
+        if not _confirm_regeneration(completed_features, issues, console):
+            result.user_aborted = True
+            result.error_message = "User aborted: issues already part of completed features"
+            console.print("[yellow]Aborted: use --force to regenerate anyway[/yellow]")
+            return result
+        # User confirmed, log warning anyway
+        logger.warning(f"Regenerating plan despite {len(completed_features)} completed feature(s)")
+    elif completed_features and force:
+        logger.warning(f"Force mode: bypassing {len(completed_features)} completed feature(s)")
+        console.print(f"  [yellow]⚠[/yellow] --force: bypassing {len(completed_features)} completed feature(s)")
 
     # Phase 2: ANALYZE
     console.print("[bold]Phase 2: Analyzing issues...[/bold]")
@@ -209,6 +230,128 @@ def _get_current_repo() -> str | None:
         return None
     except Exception:
         return None
+
+
+def _check_completed_features(
+    issues: IssueSet,
+    console: Console,
+    verbose: bool,
+) -> list:
+    """Check if any fetched issues are part of previously completed features.
+
+    Args:
+        issues: Set of issues to check.
+        console: Rich console for output.
+        verbose: Enable verbose output.
+
+    Returns:
+        List of CompletedFeature objects that match any of the issues.
+    """
+    from debussy.config import get_orchestrator_dir
+    from debussy.core.models import IssueRef
+    from debussy.core.state import StateManager
+
+    # Build list of issue refs from fetched issues
+    issue_refs: list[IssueRef] = []
+    for issue in issues.issues:
+        issue_refs.append(IssueRef(type="github", id=str(issue.number)))
+
+    if not issue_refs:
+        return []
+
+    if verbose:
+        console.print(f"  [dim]Checking {len(issue_refs)} issues against completion history...[/dim]")
+
+    # Query state database
+    try:
+        orchestrator_dir = get_orchestrator_dir()
+        state = StateManager(orchestrator_dir / "state.db")
+        completed_features = state.find_completed_features(issue_refs)
+
+        if verbose and completed_features:
+            console.print(f"  [dim]Found {len(completed_features)} matching completed feature(s)[/dim]")
+
+        return completed_features
+    except Exception as e:
+        logger.warning(f"Failed to check completion history: {e}")
+        return []
+
+
+def _confirm_regeneration(
+    completed_features: list,
+    issues: IssueSet,
+    console: Console,
+) -> bool:
+    """Prompt user to confirm regeneration of completed features.
+
+    Args:
+        completed_features: List of CompletedFeature objects.
+        issues: Fetched issue set for comparison.
+        console: Rich console for output.
+
+    Returns:
+        True if user confirms, False to abort.
+    """
+    from debussy.core.models import CompletedFeature
+
+    console.print()
+    console.print("[bold yellow]⚠️  COMPLETION WARNING[/bold yellow]")
+    console.print()
+    console.print("Some of these issues were part of previously completed features:")
+    console.print()
+
+    # Build set of fetched issue IDs for comparison
+    fetched_ids = {str(issue.number) for issue in issues.issues}
+
+    for feature in completed_features:
+        if not isinstance(feature, CompletedFeature):
+            continue
+
+        console.print(f"  [bold]{feature.name}[/bold]")
+        console.print(f"    Completed: {feature.completed_at.strftime('%Y-%m-%d %H:%M')}")
+        console.print(f"    Plan: {feature.plan_path.name}")
+
+        # Show which issues overlap
+        matched = []
+        for issue_ref in feature.issues:
+            if issue_ref.type == "github" and issue_ref.id in fetched_ids:
+                matched.append(f"#{issue_ref.id}")
+        if matched:
+            console.print(f"    Matching issues: {', '.join(matched)}")
+        console.print()
+
+    # Determine if this is a full or partial match
+    all_fetched_ids = fetched_ids
+    completed_ids = set()
+    for feature in completed_features:
+        if isinstance(feature, CompletedFeature):
+            for issue_ref in feature.issues:
+                if issue_ref.type == "github":
+                    completed_ids.add(issue_ref.id)
+
+    overlap = all_fetched_ids & completed_ids
+    if overlap == all_fetched_ids:
+        console.print("[bold red]Full match:[/bold red] All requested issues are already completed.")
+        console.print("Regenerating may duplicate work already done.")
+    else:
+        console.print(f"[bold yellow]Partial match:[/bold yellow] {len(overlap)}/{len(all_fetched_ids)} issues completed.")
+        console.print("Some issues are new, but some overlap with completed work.")
+
+    console.print()
+
+    # Prompt for confirmation
+    import sys
+
+    if not sys.stdin.isatty():
+        # Non-interactive mode - reject by default
+        console.print("[dim]Non-interactive mode: aborting. Use --force to bypass.[/dim]")
+        return False
+
+    try:
+        response = console.input("Continue anyway? [y/N]: ")
+        return response.lower() in ("y", "yes")
+    except (KeyboardInterrupt, EOFError):
+        return False
 
 
 def _fetch_phase(
