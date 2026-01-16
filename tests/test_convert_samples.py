@@ -560,26 +560,17 @@ class TestConversionQualityEvaluation:
         # Tier 1: Structural checks
         assert quality.master_plan_exists, "MASTER_PLAN.md should exist"
         assert quality.filenames_valid, f"Filenames should be valid: {quality.invalid_filenames}"
-        assert quality.phase_count_match, (
-            f"Phase count should match: source={quality.source_phase_count}, "
-            f"converted={quality.converted_phase_count}"
-        )
+        assert quality.phase_count_match, f"Phase count should match: source={quality.source_phase_count}, converted={quality.converted_phase_count}"
         assert quality.gates_valid, "Gates should be valid (audit passes)"
 
         # Tier 2: Content preservation
-        assert quality.agents_preserved, (
-            f"Agent references should be preserved. Lost: {quality.agents_lost}"
-        )
+        assert quality.agents_preserved, f"Agent references should be preserved. Lost: {quality.agents_lost}"
         # Tech stack may not fully match due to template rewriting, but core should be there
         core_tech = {"flask", "postgresql", "react"}
-        assert core_tech <= quality.converted_tech_stack, (
-            f"Core tech should be preserved. Found: {quality.converted_tech_stack}"
-        )
+        assert core_tech <= quality.converted_tech_stack, f"Core tech should be preserved. Found: {quality.converted_tech_stack}"
 
         # Tier 3a: Similarity (threshold of 0.15 accounts for template rewriting)
-        assert quality.jaccard_similarity > 0.15, (
-            f"Jaccard similarity should be > 0.15, got {quality.jaccard_similarity:.2%}"
-        )
+        assert quality.jaccard_similarity > 0.15, f"Jaccard similarity should be > 0.15, got {quality.jaccard_similarity:.2%}"
 
         # Overall scores
         assert quality.tier1_score >= 0.75, f"Tier 1 score too low: {quality.tier1_score:.0%}"
@@ -656,18 +647,10 @@ class TestConversionQualityEvaluation:
         MIN_QUICK_SCORE = 0.50  # Overall minimum
         MIN_JACCARD = 0.15  # Basic word overlap
 
-        assert quality.tier1_score >= MIN_TIER1_SCORE, (
-            f"Tier 1 below threshold: {quality.tier1_score:.0%} < {MIN_TIER1_SCORE:.0%}"
-        )
-        assert quality.tier2_score >= MIN_TIER2_SCORE, (
-            f"Tier 2 below threshold: {quality.tier2_score:.0%} < {MIN_TIER2_SCORE:.0%}"
-        )
-        assert quality.quick_score >= MIN_QUICK_SCORE, (
-            f"Quick score below threshold: {quality.quick_score:.0%} < {MIN_QUICK_SCORE:.0%}"
-        )
-        assert quality.jaccard_similarity >= MIN_JACCARD, (
-            f"Jaccard below threshold: {quality.jaccard_similarity:.0%} < {MIN_JACCARD:.0%}"
-        )
+        assert quality.tier1_score >= MIN_TIER1_SCORE, f"Tier 1 below threshold: {quality.tier1_score:.0%} < {MIN_TIER1_SCORE:.0%}"
+        assert quality.tier2_score >= MIN_TIER2_SCORE, f"Tier 2 below threshold: {quality.tier2_score:.0%} < {MIN_TIER2_SCORE:.0%}"
+        assert quality.quick_score >= MIN_QUICK_SCORE, f"Quick score below threshold: {quality.quick_score:.0%} < {MIN_QUICK_SCORE:.0%}"
+        assert quality.jaccard_similarity >= MIN_JACCARD, f"Jaccard below threshold: {quality.jaccard_similarity:.0%} < {MIN_JACCARD:.0%}"
 
 
 # =============================================================================

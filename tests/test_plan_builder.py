@@ -165,7 +165,7 @@ class TestPromptTemplates:
 
         assert "## Source Issues" in prompt
         assert "Issue content here" in prompt
-        assert "## User-Provided Context" in prompt
+        assert "## User Requirements (from Q&A)" in prompt
         assert "Q&A content here" in prompt
         assert "## Template to Follow" in prompt
         assert "Template content here" in prompt
@@ -174,15 +174,15 @@ class TestPromptTemplates:
     def test_build_phase_plan_prompt(self) -> None:
         """Test building complete phase plan prompt."""
         prompt = build_phase_plan_prompt(
-            master_plan_summary="Summary here",
+            master_plan_content="# Master Plan\n\n| Phase | Title |\n|-------|-------|\n| 1 | Setup |\n| 2 | API |",
             phase_num=2,
             phase_focus="API implementation",
             related_issues="Issues here",
             phase_template="Template here",
         )
 
-        assert "## Master Plan Context" in prompt
-        assert "## Phase 2 Focus" in prompt
+        assert "## Master Plan (REFERENCE" in prompt
+        assert "## Phase 2 Assignment" in prompt
         assert "API implementation" in prompt
         assert "## Related Issues" in prompt
         assert "Issues here" in prompt

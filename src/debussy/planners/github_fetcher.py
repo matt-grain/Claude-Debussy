@@ -409,3 +409,112 @@ async def fetch_issue_detail(repo: str, issue_number: int) -> GitHubIssue | None
     )
 
     return issue_set.issues[0] if issue_set.issues else None
+
+
+async def update_issue_body(repo: str, issue_number: int, new_body: str) -> bool:
+    """Update an issue's body text.
+
+    Args:
+        repo: Repository in format 'owner/repo'.
+        issue_number: The issue number to update.
+        new_body: The new body content for the issue.
+
+    Returns:
+        True if update succeeded, False otherwise.
+
+    Raises:
+        GHNotFoundError: If gh CLI is not installed.
+        GHAuthError: If authentication fails.
+        GHRateLimitError: If rate limit is exceeded.
+    """
+    args = [
+        "issue",
+        "edit",
+        str(issue_number),
+        "--repo",
+        repo,
+        "--body",
+        new_body,
+    ]
+
+    result = await _run_gh_command(args)
+
+    if not result.success:
+        logger.warning(f"Failed to update issue {issue_number}: {result.stderr}")
+        return False
+
+    logger.info(f"Updated issue #{issue_number} body")
+    return True
+
+
+async def append_qa_to_issue(
+    repo: str,
+    issue_number: int,
+    qa_pairs: dict[str, str],
+) -> bool:
+    """Append Q&A answers to an issue's body.
+
+    Fetches the current issue body, appends a formatted Q&A section,
+    and updates the issue.
+
+    Args:
+        repo: Repository in format 'owner/repo'.
+        issue_number: The issue number to update.
+        qa_pairs: Dictionary mapping questions to answers.
+
+    Returns:
+        True if update succeeded, False otherwise.
+    """
+    if not qa_pairs:
+        return True  # Nothing to append
+
+    # Fetch current issue body
+    issue = await fetch_issue_detail(repo, issue_number)
+    if issue is None:
+        logger.warning(f"Could not fetch issue #{issue_number} for Q&A append")
+        return False
+
+    # Build Q&A section
+    qa_section = "\n\n---\n\n## 📝 Clarifications (via Debussy Q&A)\n\n"
+
+    for question, answer in qa_pairs.items():
+        # Extract the gap type from the question format
+        # Questions are like "Issue #10 'Title' has no acceptance criteria..."
+        label = _extract_qa_label(question)
+        qa_section += f"**{label}:** {answer}\n\n"
+
+    # Append to existing body
+    new_body = (issue.body or "") + qa_section
+
+    return await update_issue_body(repo, issue_number, new_body)
+
+
+def _extract_qa_label(question: str) -> str:
+    """Extract a label from a Q&A question.
+
+    Uses keywords that match the analyzer's gap detection keywords
+    so that on retry, the analyzer will see these as filled gaps.
+
+    Args:
+        question: The question text.
+
+    Returns:
+        A short label with keywords matching analyzer patterns.
+    """
+    question_lower = question.lower()
+
+    # Mapping of keyword patterns to labels
+    keyword_labels = [
+        (("acceptance criteria",), "Acceptance Criteria (done when)"),
+        (("technologies", "frameworks"), "Tech Stack"),
+        (("depend", "block"), "Depends on / Blocked by"),
+        (("validation", "test"), "Testing / Validation"),
+        (("scope", "requirements"), "Scope / Requirements"),
+        (("context", "situation"), "Problem Context"),
+    ]
+
+    for keywords, label in keyword_labels:
+        if any(kw in question_lower for kw in keywords):
+            return label
+
+    return "Details"

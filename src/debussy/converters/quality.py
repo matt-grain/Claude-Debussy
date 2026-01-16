@@ -129,43 +129,98 @@ def check_master_plan_exists(output_dir: Path) -> bool:
 
 
 # Common technology keywords to look for
-TECH_KEYWORDS = frozenset({
-    # Languages
-    "python", "javascript", "typescript", "go", "rust", "java", "ruby",
-    # Backend frameworks
-    "flask", "django", "fastapi", "express", "node", "nodejs", "rails",
-    # Frontend frameworks
-    "react", "vue", "angular", "svelte", "nextjs", "next.js",
-    # Databases
-    "postgresql", "postgres", "mysql", "mongodb", "redis", "sqlite",
-    # Auth
-    "jwt", "oauth", "auth0", "cognito",
-    # Cloud/Infra
-    "docker", "kubernetes", "k8s", "aws", "gcp", "azure",
-    # Testing
-    "pytest", "jest", "mocha", "cypress",
-    # Other
-    "graphql", "rest", "api", "websocket", "celery", "rabbitmq",
-})
+TECH_KEYWORDS = frozenset(
+    {
+        # Languages
+        "python",
+        "javascript",
+        "typescript",
+        "go",
+        "rust",
+        "java",
+        "ruby",
+        # Backend frameworks
+        "flask",
+        "django",
+        "fastapi",
+        "express",
+        "node",
+        "nodejs",
+        "rails",
+        # Frontend frameworks
+        "react",
+        "vue",
+        "angular",
+        "svelte",
+        "nextjs",
+        "next.js",
+        # Databases
+        "postgresql",
+        "postgres",
+        "mysql",
+        "mongodb",
+        "redis",
+        "sqlite",
+        # Auth
+        "jwt",
+        "oauth",
+        "auth0",
+        "cognito",
+        # Cloud/Infra
+        "docker",
+        "kubernetes",
+        "k8s",
+        "aws",
+        "gcp",
+        "azure",
+        # Testing
+        "pytest",
+        "jest",
+        "mocha",
+        "cypress",
+        # Other
+        "graphql",
+        "rest",
+        "api",
+        "websocket",
+        "celery",
+        "rabbitmq",
+    }
+)
 
 
 # Agent names that should be preserved
-AGENT_KEYWORDS = frozenset({
-    "python-task-validator",
-    "textual-tui-expert",
-    "llm-security-expert",
-    "explore",
-    "debussy",
-})
+AGENT_KEYWORDS = frozenset(
+    {
+        "python-task-validator",
+        "textual-tui-expert",
+        "llm-security-expert",
+        "explore",
+        "debussy",
+    }
+)
 
 
 # Risk-related terms
-RISK_KEYWORDS = frozenset({
-    "risk", "risks", "mitigation", "mitigate",
-    "blocker", "blockers", "dependency", "dependencies",
-    "concern", "concerns", "issue", "issues",
-    "critical", "high-priority", "security",
-})
+RISK_KEYWORDS = frozenset(
+    {
+        "risk",
+        "risks",
+        "mitigation",
+        "mitigate",
+        "blocker",
+        "blockers",
+        "dependency",
+        "dependencies",
+        "concern",
+        "concerns",
+        "issue",
+        "issues",
+        "critical",
+        "high-priority",
+        "security",
+    }
+)
 
 
 def extract_keywords(text: str, vocabulary: frozenset[str]) -> set[str]:
@@ -249,19 +304,109 @@ def extract_task_keywords(text: str) -> set[str]:
 # =============================================================================
 
 # Common stopwords to filter out (minimal set to avoid dependencies)
-STOPWORDS = frozenset({
-    "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
-    "of", "with", "by", "from", "as", "is", "was", "are", "were", "been",
-    "be", "have", "has", "had", "do", "does", "did", "will", "would",
-    "could", "should", "may", "might", "must", "shall", "can", "need",
-    "this", "that", "these", "those", "it", "its", "they", "them", "their",
-    "we", "our", "you", "your", "he", "she", "his", "her", "all", "each",
-    "every", "both", "few", "more", "most", "other", "some", "such", "no",
-    "not", "only", "own", "same", "so", "than", "too", "very", "just",
-    "also", "now", "here", "there", "when", "where", "why", "how", "what",
-    "which", "who", "whom", "if", "then", "else", "because", "while",
-    "although", "though", "after", "before", "during", "until", "unless",
-})
+STOPWORDS = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "but",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "with",
+        "by",
+        "from",
+        "as",
+        "is",
+        "was",
+        "are",
+        "were",
+        "been",
+        "be",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "must",
+        "shall",
+        "can",
+        "need",
+        "this",
+        "that",
+        "these",
+        "those",
+        "it",
+        "its",
+        "they",
+        "them",
+        "their",
+        "we",
+        "our",
+        "you",
+        "your",
+        "he",
+        "she",
+        "his",
+        "her",
+        "all",
+        "each",
+        "every",
+        "both",
+        "few",
+        "more",
+        "most",
+        "other",
+        "some",
+        "such",
+        "no",
+        "not",
+        "only",
+        "own",
+        "same",
+        "so",
+        "than",
+        "too",
+        "very",
+        "just",
+        "also",
+        "now",
+        "here",
+        "there",
+        "when",
+        "where",
+        "why",
+        "how",
+        "what",
+        "which",
+        "who",
+        "whom",
+        "if",
+        "then",
+        "else",
+        "because",
+        "while",
+        "although",
+        "though",
+        "after",
+        "before",
+        "during",
+        "until",
+        "unless",
+    }
+)
 
 # Template boilerplate phrases to strip (Debussy-specific)
 TEMPLATE_BOILERPLATE = [
@@ -622,11 +767,7 @@ class ConversionQuality:
     def quick_score(self) -> float:
         """Quick overall quality score using Tier 1-2 metrics (0-1)."""
         # Use preprocessed similarity if available (threshold 0.3 for preprocessed)
-        similarity_ok = (
-            self.preprocessed_jaccard > 0.3
-            if self.preprocessed_jaccard > 0
-            else self.jaccard_similarity > 0.2
-        )
+        similarity_ok = self.preprocessed_jaccard > 0.3 if self.preprocessed_jaccard > 0 else self.jaccard_similarity > 0.2
         checks = [
             self.phase_count_match,
             self.master_plan_exists,
@@ -647,11 +788,7 @@ class ConversionQuality:
         - Tier 2: 35% (content preservation matters)
         - Tier 3a: 25% (similarity is a softer signal)
         """
-        return (
-            self.tier1_score * 0.40
-            + self.tier2_score * 0.35
-            + self.tier3a_score * 0.25
-        )
+        return self.tier1_score * 0.40 + self.tier2_score * 0.35 + self.tier3a_score * 0.25
 
     def summary(self) -> str:
         """Human-readable summary of quality metrics."""
@@ -673,9 +810,11 @@ class ConversionQuality:
         if self.tech_lost:
             lines.append(f"    Lost: {', '.join(sorted(self.tech_lost))}")
 
-        lines.extend([
-            f"  Agents: {len(self.converted_agents)}/{len(self.source_agents)} preserved {'✓' if self.agents_preserved else '✗'}",
-        ])
+        lines.extend(
+            [
+                f"  Agents: {len(self.converted_agents)}/{len(self.source_agents)} preserved {'✓' if self.agents_preserved else '✗'}",
+            ]
+        )
 
         if self.agents_lost:
             lines.append(f"    Lost: {', '.join(sorted(self.agents_lost))}")
@@ -695,20 +834,22 @@ class ConversionQuality:
         if self.risks_lost:
             lines.append(f"    Lost: {', '.join(sorted(self.risks_lost))}")
 
-        lines.extend([
-            f"  Tier 2 Score: {self.tier2_score:.0%}",
-            "",
-            "Tier 3a: Text Similarity",
-            f"  Raw Jaccard: {self.jaccard_similarity:.2%}",
-            f"  Raw Weighted: {self.weighted_jaccard_similarity:.2%}",
-            f"  Preprocessed Jaccard: {self.preprocessed_jaccard:.2%}",
-            f"  Preprocessed Weighted: {self.preprocessed_weighted_jaccard:.2%}",
-            f"  Tier 3a Score: {self.tier3a_score:.0%}",
-            "",
-            "=" * 40,
-            f"Quick Score: {self.quick_score:.0%}",
-            f"Full Score:  {self.full_score:.0%}",
-        ])
+        lines.extend(
+            [
+                f"  Tier 2 Score: {self.tier2_score:.0%}",
+                "",
+                "Tier 3a: Text Similarity",
+                f"  Raw Jaccard: {self.jaccard_similarity:.2%}",
+                f"  Raw Weighted: {self.weighted_jaccard_similarity:.2%}",
+                f"  Preprocessed Jaccard: {self.preprocessed_jaccard:.2%}",
+                f"  Preprocessed Weighted: {self.preprocessed_weighted_jaccard:.2%}",
+                f"  Tier 3a Score: {self.tier3a_score:.0%}",
+                "",
+                "=" * 40,
+                f"Quick Score: {self.quick_score:.0%}",
+                f"Full Score:  {self.full_score:.0%}",
+            ]
+        )
 
         return "\n".join(lines)
 
@@ -798,9 +939,7 @@ class ConversionQualityEvaluator:
 
         quality.master_plan_exists = check_master_plan_exists(self.output_dir)
 
-        quality.filenames_valid, quality.invalid_filenames = check_filename_convention(
-            self.output_dir
-        )
+        quality.filenames_valid, quality.invalid_filenames = check_filename_convention(self.output_dir)
 
         # Tier 2: Keyword preservation
         quality.source_tech_stack = extract_tech_stack(source)

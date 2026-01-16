@@ -66,6 +66,14 @@ class Config(BaseModel):
         default=3,
         description="Maximum restart attempts per phase before failing. Set to 0 to disable restarts.",
     )
+    plan_generation_model: str = Field(
+        default="sonnet",
+        description="Claude model for plan-from-issues generation (haiku, sonnet, opus)",
+    )
+    plan_generation_timeout: int = Field(
+        default=300,
+        description="Timeout for plan generation Claude calls in seconds (default: 5 min)",
+    )
 
     @classmethod
     def load(cls, config_path: Path | None = None) -> Config:

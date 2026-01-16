@@ -289,15 +289,21 @@ def run(
     # Load config from file, then apply CLI overrides
     from debussy.config import Config
 
-    interactive = not no_interactive
     config = Config.load()  # Load from .debussy/config.yaml if exists
-    # Apply CLI overrides (only model, output, interactive are typically overridden)
+
+    # Apply CLI overrides - only override if explicitly set via CLI flag
+    # no_interactive flag: only override config if --no-interactive was passed
+    if no_interactive:
+        config.interactive = False
+
+    # Model and output: apply CLI overrides to config
+    # Note: Since defaults match config.py defaults, only non-default values indicate explicit CLI usage
     config.model = model
-    # In non-interactive mode, default to file output (logs are essential for CI/automation)
-    if not interactive and output == "terminal":
-        output = "file"
     config.output = output  # type: ignore[assignment]
-    config.interactive = interactive
+
+    # In non-interactive mode, force file output (logs are essential for CI/automation)
+    if not config.interactive and config.output == "terminal":
+        config.output = "file"  # type: ignore[assignment]
     # Only override learnings if explicitly set via CLI flag
     if learnings:
         config.learnings = learnings
@@ -317,7 +323,7 @@ def run(
 
     # Security warning for non-sandboxed mode
     if config.sandbox_mode == "none" and not accept_risks:
-        if not interactive:
+        if not config.interactive:
             # Non-interactive mode: require --accept-risks flag
             console.print("[bold red]SECURITY WARNING[/bold red]")
             console.print("Running without sandbox gives Claude FULL ACCESS to your system.")
@@ -359,7 +365,7 @@ def run(
             console.print("  2. Use --allow-dirty to proceed anyway")
             console.print("  3. Use --no-auto-commit to disable auto-commit")
             console.print()
-            if not interactive:
+            if not config.interactive:
                 raise typer.Exit(1)
             confirm = typer.confirm("Proceed with uncommitted changes?", default=False)
             if not confirm:
@@ -370,7 +376,7 @@ def run(
     plan = parse_master_plan(master_plan)
 
     try:
-        if interactive:
+        if config.interactive:
             # For TUI mode: get resumable info and let TUI handle the prompt
             resumable_run = None if restart else _get_resumable_run_info(master_plan)
             # If --resume flag, auto-skip without dialog
@@ -390,11 +396,11 @@ def run(
             _display_banner(
                 plan_name=plan.name,
                 phases=plan.phases,
-                model=model,
-                output=output,
+                model=config.model,
+                output=config.output,
                 max_retries=config.max_retries,
                 timeout=config.timeout,
-                interactive=interactive,
+                interactive=config.interactive,
             )
             if phase:
                 console.print(f"[yellow]Starting from phase: {phase}[/yellow]\n")
@@ -403,7 +409,7 @@ def run(
             skip_phases = None if restart else _check_resumable_run_noninteractive(master_plan, resume_run)
             run_id = run_orchestration(master_plan, start_phase=phase, skip_phases=skip_phases, config=config)
             console.print(f"\nOrchestration completed. Run ID: {run_id}")
-            if output in ("file", "both"):
+            if config.output in ("file", "both"):
                 console.print("[dim]Logs saved to: .debussy/logs/[/dim]")
     except Exception as e:
         console.print(f"\n[bold red]Orchestration failed: {e}[/bold red]")
@@ -902,11 +908,18 @@ def convert(
                 console.print(f"  • {issue}")
             console.print()
 
-            # Offer upgrade to sonnet
-            if typer.confirm(
-                "Retry with Sonnet model for better quality? (more expensive, slower)",
-                default=False,
-            ):
+            # Offer upgrade to sonnet (skip in non-interactive/CI environments)
+            try:
+                should_upgrade = typer.confirm(
+                    "Retry with Sonnet model for better quality? (more expensive, slower)",
+                    default=False,
+                )
+            except (typer.Abort, EOFError):
+                # Non-interactive environment (CI, tests) - skip upgrade prompt
+                should_upgrade = False
+                console.print("[dim]Tip: Use --model sonnet for complex plans, or split into smaller files[/dim]\n")
+
+            if should_upgrade:
                 console.print("\n[cyan]Retrying with Sonnet (this may take a few minutes)...[/cyan]\n")
                 # Sonnet needs more time for complex plans
                 sonnet_timeout = max(timeout, 600)  # At least 10 minutes for sonnet
@@ -928,8 +941,9 @@ def convert(
                     console.print("[red]✗ Sonnet conversion also failed[/red]")
                     console.print("[dim]Consider splitting your plan into smaller parts[/dim]\n")
                     raise typer.Exit(1)
-            else:
-                console.print("[dim]Tip: Use --model sonnet for complex plans, or split into smaller files[/dim]\n")
+            elif should_upgrade is False:
+                # User explicitly declined (not caught by exception)
+                pass  # Already printed tip above or will print below
 
         console.print("[bold]Next steps:[/bold]")
         master_plan = output / "MASTER_PLAN.md"
@@ -1448,6 +1462,85 @@ def sandbox_status() -> None:
     else:
         console.print(f"[yellow]Image:[/yellow] {SANDBOX_IMAGE} not found")
         console.print("  Build with: debussy sandbox-build")
+
+
+@app.command("plan-from-issues")
+def plan_from_issues(
+    source: Annotated[
+        str,
+        typer.Option("--source", "-s", help="Issue source: gh (GitHub), jira (future)"),
+    ] = "gh",
+    repo: Annotated[
+        str | None,
+        typer.Option("--repo", "-r", help="Repository in 'owner/repo' format (default: current repo)"),
+    ] = None,
+    milestone: Annotated[
+        str | None,
+        typer.Option("--milestone", "-m", help="Filter by GitHub milestone"),
+    ] = None,
+    label: Annotated[
+        list[str] | None,
+        typer.Option("--label", "-l", help="Filter by label (repeatable)"),
+    ] = None,
+    output_dir: Annotated[
+        Path | None,
+        typer.Option("--output-dir", "-o", help="Output directory (default: plans/<feature>)"),
+    ] = None,
+    skip_qa: Annotated[
+        bool,
+        typer.Option("--skip-qa", help="Skip interactive Q&A phase"),
+    ] = False,
+    max_retries: Annotated[
+        int,
+        typer.Option("--max-retries", help="Maximum audit retry attempts"),
+    ] = 3,
+    model: Annotated[
+        str,
+        typer.Option("--model", help="Claude model to use (default: sonnet)"),
+    ] = "sonnet",
+    timeout: Annotated[
+        int,
+        typer.Option("--timeout", "-t", help="Timeout for Claude calls in seconds (default: 300)"),
+    ] = 300,
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", "-v", help="Enable verbose output"),
+    ] = False,
+) -> None:
+    """Generate Debussy plans from GitHub issues.
+
+    Fetches issues, analyzes them for gaps, conducts optional Q&A,
+    generates structured plans, and validates with audit.
+
+    Examples:
+        debussy plan-from-issues --milestone "v2.0"
+        debussy plan-from-issues --label feature --label auth
+        debussy plan-from-issues --source gh --skip-qa
+    """
+    from debussy.planners.command import plan_from_issues as do_plan_from_issues
+
+    # Validate source
+    if source not in ("gh", "jira"):
+        console.print(f"[red]Error:[/red] Invalid source '{source}'. Use 'gh' or 'jira'.")
+        raise typer.Exit(1)
+
+    # Run the command
+    result = do_plan_from_issues(
+        source=source,  # type: ignore[arg-type]
+        repo=repo,
+        milestone=milestone,
+        labels=label,
+        output_dir=output_dir,
+        skip_qa=skip_qa,
+        max_retries=max_retries,
+        model=model,
+        timeout=timeout,
+        verbose=verbose,
+        console=console,
+    )
+
+    if not result.success:
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":

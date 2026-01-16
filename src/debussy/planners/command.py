@@ -51,8 +51,8 @@ def plan_from_issues(
     output_dir: Path | None = None,
     skip_qa: bool = False,
     max_retries: int = 3,
-    model: str = "haiku",
-    timeout: int = 120,
+    model: str = "sonnet",
+    timeout: int = 300,
     verbose: bool = False,
     console: Console | None = None,
 ) -> PlanFromIssuesResult:
@@ -125,6 +125,12 @@ def plan_from_issues(
         answers = _qa_phase(analysis, console, verbose)
         result.questions_asked = len(answers)
         console.print(f"  [green]✓[/green] Collected {len(answers)} answers")
+
+        # Persist answers to GitHub issues immediately
+        if answers:
+            console.print("  [dim]Updating GitHub issues with answers...[/dim]")
+            updated = _persist_answers_to_issues(repo, answers, console, verbose)
+            console.print(f"  [green]✓[/green] Updated {updated} issues with Q&A answers")
     elif skip_qa:
         console.print("[bold]Phase 3: Q&A skipped (--skip-qa)[/bold]")
     else:
@@ -301,6 +307,60 @@ def _qa_phase(
     console.print()
 
     return handler.get_answers_by_question()
+
+
+def _persist_answers_to_issues(
+    repo: str,
+    answers: dict[str, str],
+    console: Console,
+    verbose: bool,
+) -> int:
+    """Persist Q&A answers back to GitHub issues.
+
+    Groups answers by issue number and appends them to each issue's body.
+
+    Args:
+        repo: Repository in format 'owner/repo'.
+        answers: Dictionary mapping questions to user answers.
+        console: Rich console for output.
+        verbose: Enable verbose output.
+
+    Returns:
+        Number of issues successfully updated.
+    """
+    import re
+
+    from debussy.planners.github_fetcher import append_qa_to_issue
+
+    # Group answers by issue number
+    # Questions are formatted as "Issue #{number} 'title'..."
+    answers_by_issue: dict[int, dict[str, str]] = {}
+
+    for question, answer in answers.items():
+        # Extract issue number from question
+        match = re.search(r"Issue #(\d+)", question)
+        if match:
+            issue_num = int(match.group(1))
+            if issue_num not in answers_by_issue:
+                answers_by_issue[issue_num] = {}
+            answers_by_issue[issue_num][question] = answer
+
+    # Update each issue
+    updated_count = 0
+    for issue_num, issue_answers in answers_by_issue.items():
+        if verbose:
+            console.print(f"  [dim]Updating issue #{issue_num} with {len(issue_answers)} answers...[/dim]")
+
+        try:
+            success = asyncio.run(append_qa_to_issue(repo, issue_num, issue_answers))
+            if success:
+                updated_count += 1
+            else:
+                console.print(f"  [yellow]Warning:[/yellow] Failed to update issue #{issue_num}")
+        except Exception as e:
+            console.print(f"  [yellow]Warning:[/yellow] Error updating issue #{issue_num}: {e}")
+
+    return updated_count
 
 
 def _generate_phase(

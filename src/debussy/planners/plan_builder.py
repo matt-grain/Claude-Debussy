@@ -28,15 +28,15 @@ class PlanBuilder:
         self,
         issues: IssueSet,
         analysis: AnalysisReport,
-        model: str = "haiku",
-        timeout: int = 120,
+        model: str = "sonnet",
+        timeout: int = 300,
     ) -> None:
         """Initialize the plan builder.
 
         Args:
             issues: The set of GitHub issues to generate a plan from.
             analysis: The analysis report with gap detection results.
-            model: Claude model to use (haiku recommended for cost).
+            model: Claude model to use (sonnet default for quality).
             timeout: Timeout for Claude CLI calls in seconds.
         """
         self.issues = issues
@@ -46,6 +46,7 @@ class PlanBuilder:
         self._answers: dict[str, str] = {}
         self._master_template: str | None = None
         self._phase_template: str | None = None
+        self._master_plan_content: str | None = None  # Store generated master plan
 
     def set_answers(self, answers: dict[str, str]) -> None:
         """Store Q&A responses from the user.
@@ -153,6 +154,7 @@ class PlanBuilder:
             SYSTEM_PROMPT,
             build_phase_plan_prompt,
             format_issue_for_prompt,
+            format_qa_for_prompt,
         )
 
         # Format relevant issues (for now, include all)
@@ -166,19 +168,23 @@ class PlanBuilder:
                 state=issue.state,
             )
 
+        # Format Q&A answers (user requirements)
+        qa_context = format_qa_for_prompt(self._answers)
+
         # Load templates
         _, phase_template = self._load_templates()
 
-        # Build a brief master plan summary
-        master_summary = f"Feature plan with {len(self.issues)} source issues, {self._estimate_phase_count()} phases total."
+        # Use full master plan content for context (critical for consistency)
+        master_content = self._master_plan_content or f"Feature plan with {len(self.issues.issues)} source issues."
 
         # Build the user prompt
         user_prompt = build_phase_plan_prompt(
-            master_plan_summary=master_summary,
+            master_plan_content=master_content,
             phase_num=phase_num,
             phase_focus=phase_focus,
             related_issues=related_issues,
             phase_template=phase_template,
+            qa_answers=qa_context,
         )
 
         return f"{SYSTEM_PROMPT}\n\n{user_prompt}"
@@ -268,6 +274,9 @@ class PlanBuilder:
         master_content = self.generate_master_plan()
         files["MASTER_PLAN.md"] = master_content
 
+        # Store master plan for phase generation context
+        self._master_plan_content = master_content
+
         # Extract phase focuses from master plan if possible
         phase_focuses = self._extract_phase_focuses(master_content)
 
@@ -317,9 +326,11 @@ class PlanBuilder:
         """
         focuses: dict[int, str] = {}
 
-        # Look for phase table rows like:
+        # Look for phase table rows that contain phase links:
         # | 1 | [Title](phase-1.md) | Focus description | Risk | Status |
-        pattern = r"\|\s*(\d+)\s*\|[^|]+\|([^|]+)\|"
+        # The ](phase-N.md) pattern uniquely identifies phase rows,
+        # avoiding false matches from Success Metrics or Risk tables.
+        pattern = r"\|\s*(\d+)\s*\|\s*\[[^\]]+\]\(phase-\d+\.md\)\s*\|([^|]+)\|"
 
         for match in re.finditer(pattern, master_content):
             phase_num = int(match.group(1))

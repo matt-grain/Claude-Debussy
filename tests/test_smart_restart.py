@@ -426,11 +426,7 @@ class TestRestartContextInjection:
         restart_context = None
         original_prompt = "Execute phase 1..."
 
-        final_prompt = (
-            f"{restart_context}\n\n---\n\n{original_prompt}"
-            if restart_context
-            else original_prompt
-        )
+        final_prompt = f"{restart_context}\n\n---\n\n{original_prompt}" if restart_context else original_prompt
 
         assert final_prompt == original_prompt
 

@@ -28,8 +28,60 @@ class GapType(str, Enum):
     CONTEXT = "context"
 
 
+# Q&A section header that Debussy adds to issues
+QA_SECTION_HEADER = "## 📝 Clarifications (via Debussy Q&A)"
+
+# Mapping from Q&A label patterns to GapType
+# These are the labels used in github_fetcher._extract_qa_label()
+QA_LABEL_TO_GAP_TYPE: dict[str, GapType] = {
+    "acceptance criteria": GapType.ACCEPTANCE_CRITERIA,
+    "done when": GapType.ACCEPTANCE_CRITERIA,
+    "tech stack": GapType.TECH_STACK,
+    "technologies": GapType.TECH_STACK,
+    "depends on": GapType.DEPENDENCIES,
+    "blocked by": GapType.DEPENDENCIES,
+    "dependencies": GapType.DEPENDENCIES,
+    "testing": GapType.VALIDATION,
+    "validation": GapType.VALIDATION,
+    "scope": GapType.SCOPE,
+    "requirements": GapType.SCOPE,
+    "context": GapType.CONTEXT,
+    "problem": GapType.CONTEXT,
+}
+
+
 # Severity type for gaps
 GapSeverity = Literal["critical", "warning"]
+
+
+def _parse_qa_section(body: str) -> set[GapType]:
+    """Parse a Debussy Q&A section to find which gap types have been answered.
+
+    Looks for the Q&A section header and extracts labels to determine
+    which gaps have already been addressed.
+
+    Args:
+        body: The issue body text.
+
+    Returns:
+        Set of GapType values that have been answered in the Q&A section.
+    """
+    if not body or QA_SECTION_HEADER not in body:
+        return set()
+
+    # Extract the Q&A section content (everything after the header)
+    qa_start = body.find(QA_SECTION_HEADER)
+    qa_content = body[qa_start:].lower()
+
+    answered_gaps: set[GapType] = set()
+
+    # Check for each label pattern
+    for label_pattern, gap_type in QA_LABEL_TO_GAP_TYPE.items():
+        # Look for **Label:** or **Label: pattern (bold markdown labels)
+        if f"**{label_pattern}" in qa_content:
+            answered_gaps.add(gap_type)
+
+    return answered_gaps
 
 
 @dataclass
@@ -544,6 +596,9 @@ class IssueAnalyzer:
         """
         gaps: list[Gap] = []
 
+        # Check if issue has a Debussy Q&A section with answered gaps
+        answered_gaps = _parse_qa_section(issue.body or "")
+
         # Run all gap detection functions
         gap_detectors = [
             detect_acceptance_criteria_gap,
@@ -557,6 +612,9 @@ class IssueAnalyzer:
         for detector in gap_detectors:
             gap = detector(issue)
             if gap is not None:
+                # Skip gaps that were already answered in Q&A section
+                if gap.gap_type in answered_gaps:
+                    continue
                 gaps.append(gap)
 
         # Calculate quality score and criteria
