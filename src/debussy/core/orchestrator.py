@@ -430,6 +430,13 @@ class Orchestrator:
             self.state.update_run_status(run_id, RunStatus.PAUSED)
             self.notifier.warning("Orchestration Paused", "Interrupted by user")
             self.ui.log_raw("[yellow]Orchestration paused by user[/yellow]")
+        except asyncio.CancelledError:
+            # CancelledError is BaseException, not Exception - must catch explicitly
+            # This happens when TUI quits, crashes, or connection drops
+            self.state.update_run_status(run_id, RunStatus.PAUSED)
+            self.notifier.warning("Orchestration Cancelled", "Session terminated")
+            self.ui.log_raw("[yellow]Orchestration cancelled[/yellow]")
+            raise  # Re-raise so TUI can handle cleanup
         except Exception as e:
             self.state.update_run_status(run_id, RunStatus.FAILED)
             self.notifier.error("Orchestration Failed", str(e))

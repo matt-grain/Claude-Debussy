@@ -103,9 +103,17 @@ class StateManager:
 
     @contextmanager
     def _connection(self) -> Generator[sqlite3.Connection]:
-        """Context manager for database connections."""
+        """Context manager for database connections.
+
+        Uses PRAGMA synchronous=FULL to ensure data is written to disk.
+        This is critical for Docker volume mounts on Windows where grpcfuse
+        may delay syncing writes to the host filesystem.
+        """
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        # Force full sync mode for Docker volume mount compatibility
+        # Without this, writes inside Docker may not be visible on host immediately
+        conn.execute("PRAGMA synchronous=FULL")
         try:
             yield conn
             conn.commit()
