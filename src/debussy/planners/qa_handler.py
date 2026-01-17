@@ -3,16 +3,10 @@
 This module provides the QAHandler class that manages interactive
 question-and-answer sessions to fill gaps detected in issue analysis.
 
-Supports two modes:
-    TERMINAL: Traditional interactive prompts via stdin/stdout (default).
-    PIPE: JSON IPC for integration with parent processes like Claude Code.
-          Enabled via DEBUSSY_QA_PIPE=1 environment variable.
-
-In pipe mode:
-    - Questions are emitted as JSON to stdout
-    - Answers are read as JSON from stdin
-    - Logs go to stderr to keep stdout clean for IPC
-    - Timeout is configurable via DEBUSSY_QA_TIMEOUT (default: 30 seconds)
+Two-pass integration with Claude Code:
+    1. Run with --questions-only to collect all questions as JSON
+    2. Claude Code presents questions via AskUserQuestion
+    3. Run with --answers-file to inject pre-collected answers
 """
 
 from __future__ import annotations
@@ -20,28 +14,15 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
-import select
-import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
-
-from pydantic import ValidationError
-
-from debussy.planners.models import QAAnswer, QAMode, QAQuestion
 
 if TYPE_CHECKING:
     from debussy.planners.analyzer import Gap
 
-# Configure module logger - stderr only to keep stdout clean in pipe mode
+# Configure module logger
 logger = logging.getLogger(__name__)
-
-# Environment variable names
-ENV_QA_PIPE = "DEBUSSY_QA_PIPE"
-ENV_QA_TIMEOUT = "DEBUSSY_QA_TIMEOUT"
-
-# Default timeout for pipe mode stdin reads (seconds)
-DEFAULT_PIPE_TIMEOUT = 30
 
 
 class QuestionOption(TypedDict):
@@ -69,43 +50,14 @@ class QuestionBatch:
     severity: str
 
 
-class PipeTimeoutError(Exception):
-    """Raised when pipe mode times out waiting for input."""
+@dataclass
+class CollectedQuestion:
+    """A question collected for the two-pass flow."""
 
-    pass
-
-
-class PipeProtocolError(Exception):
-    """Raised when pipe mode receives invalid JSON or protocol errors."""
-
-    pass
-
-
-def _detect_qa_mode() -> QAMode:
-    """Detect which Q&A mode to use based on environment.
-
-    Returns:
-        QAMode.PIPE if DEBUSSY_QA_PIPE=1 is set, otherwise QAMode.TERMINAL.
-    """
-    pipe_enabled = os.environ.get(ENV_QA_PIPE, "").strip()
-    if pipe_enabled == "1":
-        return QAMode.PIPE
-    return QAMode.TERMINAL
-
-
-def _get_pipe_timeout() -> int:
-    """Get the timeout for pipe mode stdin reads.
-
-    Returns:
-        Timeout in seconds (default: 30).
-    """
-    timeout_str = os.environ.get(ENV_QA_TIMEOUT, "").strip()
-    if timeout_str:
-        try:
-            return int(timeout_str)
-        except ValueError:
-            logger.warning(f"Invalid {ENV_QA_TIMEOUT} value '{timeout_str}', using default {DEFAULT_PIPE_TIMEOUT}")
-    return DEFAULT_PIPE_TIMEOUT
+    question: str
+    gap_type: str
+    context: str
+    issue_number: int | None = None
 
 
 class QAHandler:
@@ -114,10 +66,9 @@ class QAHandler:
     Handles batching related questions, formatting for TUI display,
     and tracking user answers.
 
-    Supports two modes:
-        TERMINAL: Interactive prompts via stdin/stdout (default).
-        PIPE: JSON IPC for integration with Claude Code. Enabled via
-              DEBUSSY_QA_PIPE=1 environment variable.
+    Supports two modes of operation:
+        - Interactive: Direct terminal prompts (default)
+        - Pre-answered: Load answers from JSON file (--answers-file)
     """
 
     MAX_QUESTIONS_PER_BATCH = 4
@@ -126,7 +77,7 @@ class QAHandler:
         self,
         questions: list[str],
         gaps: list[Gap] | None = None,
-        mode: QAMode | None = None,
+        answers_file: Path | None = None,
     ) -> None:
         """Initialize the Q&A handler.
 
@@ -134,24 +85,38 @@ class QAHandler:
             questions: List of questions to ask.
             gaps: Optional list of Gap objects for context. If provided,
                   enables better question batching by gap type and severity.
-            mode: Explicit mode override. If None, auto-detected from environment.
+            answers_file: Optional path to JSON file with pre-collected answers.
         """
         self._questions = questions
         self._gaps = gaps
         self._answers: dict[str, str] = {}
         self._skipped: set[str] = set()
+        self._pre_loaded_answers: dict[str, str] = {}
 
-        # Detect or use explicit mode
-        self._mode = mode if mode is not None else _detect_qa_mode()
-        self._pipe_timeout = _get_pipe_timeout()
+        # Load pre-collected answers if provided
+        if answers_file:
+            self._load_answers_file(answers_file)
 
-        # Log which mode is active
-        logger.info(f"QAHandler initialized in {self._mode.value} mode")
+    def _load_answers_file(self, answers_file: Path) -> None:
+        """Load pre-collected answers from a JSON file.
 
-    @property
-    def mode(self) -> QAMode:
-        """Get the current Q&A mode."""
-        return self._mode
+        Args:
+            answers_file: Path to JSON file with answers.
+        """
+        try:
+            with answers_file.open(encoding="utf-8") as f:
+                data = json.load(f)
+
+            # Expected format: {"answers": [{"question": "...", "answer": "..."}, ...]}
+            if isinstance(data, dict) and "answers" in data:
+                for item in data["answers"]:
+                    if "question" in item and "answer" in item:
+                        self._pre_loaded_answers[item["question"]] = item["answer"]
+                logger.info(f"Loaded {len(self._pre_loaded_answers)} pre-collected answers from {answers_file}")
+            else:
+                logger.warning(f"Invalid answers file format: {answers_file}")
+        except Exception as e:
+            logger.error(f"Failed to load answers file {answers_file}: {e}")
 
     @property
     def answers(self) -> dict[str, str]:
@@ -195,10 +160,6 @@ class QAHandler:
                 return gap
         return None
 
-    # =========================================================================
-    # Terminal Mode Methods
-    # =========================================================================
-
     def _prompt_terminal(self, question: str) -> str | None:
         """Prompt for an answer in terminal mode.
 
@@ -216,140 +177,23 @@ class QAHandler:
             return None
         return answer
 
-    # =========================================================================
-    # Pipe Mode Methods
-    # =========================================================================
-
-    def _emit_question_json(self, question: str, gap_type: str = "general", context: str = "") -> None:
-        """Emit a question as JSON to stdout for pipe mode.
-
-        Args:
-            question: The question text.
-            gap_type: The type of gap this question addresses.
-            context: Additional context about why this question is being asked.
-        """
-        # Get options from the associated gap if available
-        options: list[str] = []
-        gap = self._get_gap_for_question(question)
-        if gap:
-            gap_type = gap.gap_type.value
-            context = gap.description
-
-        qa_question = QAQuestion(
-            gap_type=gap_type,
-            question=question,
-            options=options,
-            context=context,
-        )
-
-        # Write to stdout as a single line of JSON
-        json_str = qa_question.model_dump_json()
-        print(json_str, flush=True)
-        logger.debug(f"Emitted question: {json_str}")
-
-    def _read_answer_json(self, expected_gap_type: str) -> str | None:
-        """Read an answer from stdin in pipe mode with timeout.
-
-        Args:
-            expected_gap_type: The gap type we expect the answer for.
-
-        Returns:
-            The answer text, or None if skipped/timeout.
-
-        Raises:
-            PipeTimeoutError: If stdin times out.
-            PipeProtocolError: If the JSON is malformed or invalid.
-        """
-        # Check if stdin has data available (with timeout)
-        # Note: select doesn't work well on Windows, so we have a fallback
-        if hasattr(select, "select") and sys.platform != "win32":
-            readable, _, _ = select.select([sys.stdin], [], [], self._pipe_timeout)
-            if not readable:
-                raise PipeTimeoutError(f"Timeout ({self._pipe_timeout}s) waiting for answer to '{expected_gap_type}'")
-        # On Windows or if select unavailable, we just read and trust the timeout
-
-        try:
-            line = sys.stdin.readline()
-            if not line:
-                raise PipeProtocolError("EOF received on stdin - no answer provided")
-
-            line = line.strip()
-            if not line:
-                raise PipeProtocolError("Empty line received on stdin")
-
-            logger.debug(f"Received answer: {line}")
-
-            # Parse and validate JSON
-            try:
-                data = json.loads(line)
-            except json.JSONDecodeError as e:
-                raise PipeProtocolError(f"Invalid JSON received: {e}") from e
-
-            # Validate with Pydantic
-            try:
-                answer = QAAnswer.model_validate(data)
-            except ValidationError as e:
-                raise PipeProtocolError(f"Invalid answer format: {e}") from e
-
-            # Check gap type matches
-            if answer.gap_type != expected_gap_type:
-                logger.warning(f"Gap type mismatch: expected '{expected_gap_type}', got '{answer.gap_type}'")
-                # Still accept the answer, but log the mismatch
-
-            # Handle skip
-            if answer.answer.lower() == "skip":
-                return None
-
-            return answer.answer
-
-        except PipeTimeoutError:
-            raise
-        except PipeProtocolError:
-            raise
-        except Exception as e:
-            raise PipeProtocolError(f"Error reading answer: {e}") from e
-
-    def _ask_question_pipe(self, question: str) -> str | None:
-        """Ask a question in pipe mode.
-
-        Emits JSON question to stdout, reads JSON answer from stdin.
-        Falls back to terminal mode on errors.
-
-        Args:
-            question: The question to ask.
-
-        Returns:
-            The user's answer, or None if skipped.
-        """
-        gap = self._get_gap_for_question(question)
-        gap_type = gap.gap_type.value if gap else "general"
-        context = gap.description if gap else ""
-
-        try:
-            self._emit_question_json(question, gap_type, context)
-            answer = self._read_answer_json(gap_type)
-            return answer
-        except (PipeTimeoutError, PipeProtocolError) as e:
-            # Log error and fall back to terminal mode
-            logger.error(f"Pipe mode error: {e}. Falling back to terminal mode.")
-            print(f"[Pipe mode error: {e}. Falling back to interactive prompt.]", file=sys.stderr)
-            return self._prompt_terminal(question)
-
-    # =========================================================================
-    # Main Q&A Methods
-    # =========================================================================
-
     def ask_questions_interactive(self) -> dict[str, str]:
         """Conduct interactive Q&A session.
 
-        Prompts user for each pending question. Uses terminal mode or pipe mode
-        depending on configuration.
+        If pre-loaded answers are available, uses those instead of prompting.
+        Falls back to terminal prompts for questions without pre-loaded answers.
 
         Returns:
             Dictionary mapping question hashes to user answers.
         """
         for question in self.pending_questions:
-            answer = self._ask_question_pipe(question) if self._mode == QAMode.PIPE else self._prompt_terminal(question)
+            # Check for pre-loaded answer first
+            if question in self._pre_loaded_answers:
+                answer = self._pre_loaded_answers[question]
+                logger.debug(f"Using pre-loaded answer for: {question[:50]}...")
+            else:
+                # Fall back to terminal prompt
+                answer = self._prompt_terminal(question)
 
             if answer is None:
                 self.skip_question(question)
@@ -369,9 +213,64 @@ class QAHandler:
         Returns:
             The user's answer, or None if skipped.
         """
-        if self._mode == QAMode.PIPE:
-            return self._ask_question_pipe(question)
+        # Check for pre-loaded answer first
+        if question in self._pre_loaded_answers:
+            return self._pre_loaded_answers[question]
         return self._prompt_terminal(question)
+
+    def collect_questions_for_export(self) -> list[CollectedQuestion]:
+        """Collect all questions in a structured format for export.
+
+        Used by --questions-only mode to output questions as JSON.
+
+        Returns:
+            List of CollectedQuestion objects ready for JSON serialization.
+        """
+        import re
+
+        collected: list[CollectedQuestion] = []
+
+        for question in self._questions:
+            gap = self._get_gap_for_question(question)
+            gap_type = gap.gap_type.value if gap else "general"
+            context = gap.description if gap else ""
+
+            # Extract issue number from question text
+            issue_number = None
+            match = re.search(r"Issue #(\d+)", question)
+            if match:
+                issue_number = int(match.group(1))
+
+            collected.append(
+                CollectedQuestion(
+                    question=question,
+                    gap_type=gap_type,
+                    context=context,
+                    issue_number=issue_number,
+                )
+            )
+
+        return collected
+
+    def export_questions_json(self) -> str:
+        """Export all questions as JSON string.
+
+        Returns:
+            JSON string with questions array.
+        """
+        questions = self.collect_questions_for_export()
+        data = {
+            "questions": [
+                {
+                    "question": q.question,
+                    "gap_type": q.gap_type,
+                    "context": q.context,
+                    "issue_number": q.issue_number,
+                }
+                for q in questions
+            ]
+        }
+        return json.dumps(data, indent=2)
 
     def format_question_for_tui(
         self,

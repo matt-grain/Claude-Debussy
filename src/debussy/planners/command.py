@@ -45,13 +45,15 @@ class PlanFromIssuesResult:
     user_aborted: bool = False
 
 
-def plan_from_issues(
+def plan_from_issues(  # noqa: PLR0911
     source: IssueSource,
     repo: str | None = None,
     milestone: str | None = None,
     labels: list[str] | None = None,
     output_dir: Path | None = None,
     skip_qa: bool = False,
+    questions_only: bool = False,
+    answers_file: Path | None = None,
     max_retries: int = 3,
     model: str = "sonnet",
     timeout: int = 300,
@@ -70,6 +72,8 @@ def plan_from_issues(
         labels: Filter by label names.
         output_dir: Directory to write plan files. Defaults to plans/<feature>.
         skip_qa: Skip interactive Q&A phase.
+        questions_only: Output questions as JSON and exit (for Claude Code integration).
+        answers_file: Path to JSON file with pre-collected answers.
         max_retries: Maximum audit retry attempts.
         model: Claude model to use.
         timeout: Timeout for Claude calls in seconds.
@@ -140,10 +144,28 @@ def plan_from_issues(
     console.print(f"  [green]✓[/green] Found {analysis.critical_gaps} critical gaps, {analysis.total_gaps - analysis.critical_gaps} warnings")
 
     # Phase 3: Q&A (optional)
+    # Handle --questions-only mode: output questions as JSON and exit
+    if questions_only:
+        import sys
+
+        # Use stderr for status so stdout is clean JSON
+        print("[Phase 3: Exporting questions (--questions-only)...]", file=sys.stderr)
+        if analysis.questions_needed:
+            questions_json = _export_questions_json(analysis, console, verbose)
+            # Output JSON to stdout for Claude Code to capture
+            print(questions_json)
+            print(f"  Exported {len(analysis.questions_needed)} questions as JSON", file=sys.stderr)
+        else:
+            # No questions needed - output empty questions array
+            print('{"questions": []}')
+            print("  No questions needed (empty JSON output)", file=sys.stderr)
+        result.success = True
+        return result
+
     answers: dict[str, str] = {}
     if not skip_qa and analysis.questions_needed:
         console.print("[bold]Phase 3: Interactive Q&A...[/bold]")
-        answers = _qa_phase(analysis, console, verbose)
+        answers = _qa_phase(analysis, console, verbose, answers_file=answers_file)
         result.questions_asked = len(answers)
         console.print(f"  [green]✓[/green] Collected {len(answers)} answers")
 
@@ -420,10 +442,41 @@ def _analyze_phase(
     return report
 
 
+def _export_questions_json(
+    analysis: AnalysisReport,
+    console: Console,
+    verbose: bool,
+) -> str:
+    """Export questions as JSON for the two-pass flow.
+
+    Args:
+        analysis: Analysis report with questions.
+        console: Rich console for output.
+        verbose: Enable verbose output.
+
+    Returns:
+        JSON string with questions array.
+    """
+    from debussy.planners.qa_handler import QAHandler
+
+    # Collect all gaps for batching
+    all_gaps: list = []
+    for iq in analysis.issues:
+        all_gaps.extend(iq.gaps)
+
+    handler = QAHandler(analysis.questions_needed, gaps=all_gaps)
+
+    if verbose:
+        console.print(f"  [dim]Exporting {len(analysis.questions_needed)} questions[/dim]")
+
+    return handler.export_questions_json()
+
+
 def _qa_phase(
     analysis: AnalysisReport,
     console: Console,
     verbose: bool,  # noqa: ARG001
+    answers_file: Path | None = None,
 ) -> dict[str, str]:
     """Execute the Q&A phase interactively.
 
@@ -431,6 +484,7 @@ def _qa_phase(
         analysis: Analysis report with questions.
         console: Rich console for output.
         verbose: Enable verbose output (reserved for future use).
+        answers_file: Optional path to JSON file with pre-collected answers.
 
     Returns:
         Dictionary mapping questions to user answers.
@@ -442,9 +496,9 @@ def _qa_phase(
     for iq in analysis.issues:
         all_gaps.extend(iq.gaps)
 
-    handler = QAHandler(analysis.questions_needed, gaps=all_gaps)
+    handler = QAHandler(analysis.questions_needed, gaps=all_gaps, answers_file=answers_file)
 
-    # Interactive Q&A
+    # Interactive Q&A (uses pre-loaded answers if available)
     console.print()
     handler.ask_questions_interactive()
     console.print()

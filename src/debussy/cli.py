@@ -1862,6 +1862,14 @@ def plan_from_issues(
         bool,
         typer.Option("--skip-qa", help="Skip interactive Q&A phase"),
     ] = False,
+    questions_only: Annotated[
+        bool,
+        typer.Option("--questions-only", help="Output questions as JSON and exit (for Claude Code integration)"),
+    ] = False,
+    answers_file: Annotated[
+        Path | None,
+        typer.Option("--answers-file", help="Path to JSON file with pre-collected answers"),
+    ] = None,
     max_retries: Annotated[
         int,
         typer.Option("--max-retries", help="Maximum audit retry attempts"),
@@ -1892,11 +1900,17 @@ def plan_from_issues(
     you will be prompted to confirm before regenerating.
     Use --force to bypass this check.
 
+    Two-pass mode for Claude Code integration:
+        1. Run with --questions-only to get questions as JSON
+        2. Run with --answers-file to inject pre-collected answers
+
     Examples:
         debussy plan-from-issues --milestone "v2.0"
         debussy plan-from-issues --label feature --label auth
         debussy plan-from-issues --source gh --skip-qa
         debussy plan-from-issues --milestone "v1.0" --force  # bypass completion check
+        debussy plan-from-issues --milestone "v2.0" --questions-only  # output questions JSON
+        debussy plan-from-issues --milestone "v2.0" --answers-file answers.json  # use pre-collected answers
     """
     from debussy.planners.command import plan_from_issues as do_plan_from_issues
 
@@ -1913,6 +1927,8 @@ def plan_from_issues(
         labels=label,
         output_dir=output_dir,
         skip_qa=skip_qa,
+        questions_only=questions_only,
+        answers_file=answers_file,
         max_retries=max_retries,
         model=model,
         timeout=timeout,
@@ -1921,7 +1937,7 @@ def plan_from_issues(
         force=force,
     )
 
-    if not result.success:
+    if not result.success and not questions_only:
         raise typer.Exit(1)
 
 
