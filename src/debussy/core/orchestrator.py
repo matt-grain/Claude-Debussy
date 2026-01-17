@@ -1000,11 +1000,13 @@ class Orchestrator:
 
         full_message = f"{message}\n\n{co_author}"
 
-        # Stage all changes and commit
+        # Stage changes and commit
+        # Use -u to only stage modified/deleted tracked files, avoiding random untracked files
+        # Then explicitly add known phase artifacts (notes, plan status updates)
         try:
-            # Stage all changes
+            # Stage modified tracked files only
             add_result = subprocess.run(
-                ["git", "add", "-A"],
+                ["git", "add", "-u"],
                 capture_output=True,
                 text=True,
                 cwd=self.project_root,
@@ -1012,8 +1014,20 @@ class Orchestrator:
                 check=False,
             )
             if add_result.returncode != 0:
-                logger.warning(f"Git add failed: {add_result.stderr}")
+                logger.warning(f"Git add -u failed: {add_result.stderr}")
                 return
+
+            # Explicitly add phase notes file if it exists
+            notes_dir = self.master_plan_path.parent / "notes"
+            if notes_dir.exists():
+                subprocess.run(
+                    ["git", "add", str(notes_dir)],
+                    capture_output=True,
+                    text=True,
+                    cwd=self.project_root,
+                    timeout=30,
+                    check=False,
+                )
 
             # Commit with message
             commit_result = subprocess.run(

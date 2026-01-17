@@ -93,11 +93,12 @@ class TestAutoCommitPhase:
             orchestrator = Orchestrator.__new__(Orchestrator)
             orchestrator.config = Config()
             orchestrator.project_root = Path("/test/project")
+            orchestrator.master_plan_path = Path("/test/project/plans/MASTER_PLAN.md")
             orchestrator.ui = MagicMock()
 
             orchestrator._auto_commit_phase(test_phase, success=True)
 
-        # Should have called git add and commit
+        # Should have called git add, notes add, and commit
         assert mock_run.call_count == 3
 
     @patch("subprocess.run")
@@ -148,11 +149,12 @@ class TestAutoCommitPhase:
             orchestrator = Orchestrator.__new__(Orchestrator)
             orchestrator.config = Config(commit_on_failure=True)
             orchestrator.project_root = Path("/test/project")
+            orchestrator.master_plan_path = Path("/test/project/plans/MASTER_PLAN.md")
             orchestrator.ui = MagicMock()
 
             orchestrator._auto_commit_phase(test_phase, success=False)
 
-        # Should have called git add and commit
+        # Should have called git add, notes add, and commit
         assert mock_run.call_count == 3
 
     @patch("subprocess.run")
@@ -190,12 +192,13 @@ class TestAutoCommitPhase:
             orchestrator = Orchestrator.__new__(Orchestrator)
             orchestrator.config = Config()
             orchestrator.project_root = Path("/test/project")
+            orchestrator.master_plan_path = Path("/test/project/plans/MASTER_PLAN.md")
             orchestrator.ui = MagicMock()
 
             orchestrator._auto_commit_phase(test_phase, success=True)
 
-        # Check commit message contains phase info
-        commit_call = mock_run.call_args_list[2]
+        # Check commit message contains phase info (commit is now call 3 due to notes add)
+        commit_call = mock_run.call_args_list[-1]
         commit_args = commit_call[0][0]
         assert "git" in commit_args
         assert "commit" in commit_args
@@ -219,12 +222,13 @@ class TestAutoCommitPhase:
             orchestrator = Orchestrator.__new__(Orchestrator)
             orchestrator.config = Config(model="sonnet")
             orchestrator.project_root = Path("/test/project")
+            orchestrator.master_plan_path = Path("/test/project/plans/MASTER_PLAN.md")
             orchestrator.ui = MagicMock()
 
             orchestrator._auto_commit_phase(test_phase, success=True)
 
-        # Check commit message contains Co-Authored-By
-        commit_call = mock_run.call_args_list[2]
+        # Check commit message contains Co-Authored-By (commit is now last call due to notes add)
+        commit_call = mock_run.call_args_list[-1]
         commit_args = commit_call[0][0]
         commit_message = commit_args[commit_args.index("-m") + 1]
         assert "Co-Authored-By:" in commit_message

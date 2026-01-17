@@ -24,3 +24,9 @@ tmpclaude-*
 
 # qi db
 code-index.db
+
+# Local dev files (not for repo)
+notes/
+generated-plan/
+cms.md
+phase1-completion-notes.md
