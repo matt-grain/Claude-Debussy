@@ -20,6 +20,7 @@ from debussy.core.models import (
     RunStatus,
 )
 from debussy.core.state import StateManager
+from debussy.logging import get_orchestrator_logger
 from debussy.notifications.base import ConsoleNotifier, Notifier, NullNotifier
 from debussy.notifications.desktop import CompositeNotifier, DesktopNotifier
 from debussy.notifications.ntfy import NtfyNotifier
@@ -77,6 +78,9 @@ class Orchestrator:
 
         # Initialize checkpoint manager for progress tracking
         self.checkpoint_manager = CheckpointManager(self.project_root)
+
+        # Initialize orchestrator event logger
+        self._event_logger = get_orchestrator_logger(self.project_root)
 
         # Initialize UI based on config
         self.ui: OrchestratorUI = TextualUI() if self.config.interactive else NonInteractiveUI()
@@ -321,6 +325,21 @@ class Orchestrator:
         assert self.plan is not None
 
         run_id = self.state.create_run(self.plan)
+
+        # Log configuration and run initialization
+        self._event_logger.log_config(
+            model=self.config.model,
+            sandbox_mode=self.config.sandbox_mode,
+            learnings_enabled=self.config.learnings,
+            auto_commit=self.config.auto_commit,
+            interactive=self.config.interactive,
+        )
+        self._event_logger.log_run_init(
+            run_id=run_id,
+            plan_path=str(self.master_plan_path),
+            total_phases=len(self.plan.phases),
+        )
+
         self.notifier.info(
             "Orchestration Started",
             f"Run ID: {run_id}, Plan: {self.plan.name}",
@@ -367,6 +386,7 @@ class Orchestrator:
                 # Skip phases that were completed in a previous run (state.db is source of truth)
                 if phase.id in effective_skip_phases:
                     self.ui.log_raw(f"[dim]Skipping completed phase {phase.id}: {phase.title}[/dim]")
+                    self._event_logger.log_phase_skip(phase.id, "already completed in previous run")
                     phase.status = PhaseStatus.COMPLETED  # For dependency checks
                     continue
 
@@ -374,6 +394,7 @@ class Orchestrator:
                 # (for manually edited plans where user marked phases done)
                 if phase.status == PhaseStatus.COMPLETED:
                     self.ui.log_raw(f"[dim]Skipping phase {phase.id}: marked completed in plan file[/dim]")
+                    self._event_logger.log_phase_skip(phase.id, "marked completed in plan file")
                     continue
                 # Check for user actions before each phase
                 if await self._handle_user_action(run_id, phase):
@@ -386,6 +407,7 @@ class Orchestrator:
                     )
                     msg = f"[dim]Phase {phase.id} skipped: dependencies not met[/dim]"
                     self.ui.log_raw(msg)
+                    self._event_logger.log_phase_skip(phase.id, "dependencies not met")
                     continue
 
                 # Update UI for new phase
@@ -397,10 +419,24 @@ class Orchestrator:
 
                 if not success:
                     self.state.update_run_status(run_id, RunStatus.FAILED)
+                    completed_count = sum(1 for p in self.plan.phases if p.status == PhaseStatus.COMPLETED)
+                    self._event_logger.log_run_complete(
+                        run_id=run_id,
+                        status="failed",
+                        completed_phases=completed_count,
+                        total_phases=len(self.plan.phases),
+                    )
                     self.ui.stop()
                     return run_id
 
             self.state.update_run_status(run_id, RunStatus.COMPLETED)
+            completed_count = sum(1 for p in self.plan.phases if p.status == PhaseStatus.COMPLETED)
+            self._event_logger.log_run_complete(
+                run_id=run_id,
+                status="completed",
+                completed_phases=completed_count,
+                total_phases=len(self.plan.phases),
+            )
             self.notifier.success(
                 "Orchestration Completed",
                 "All phases completed successfully",
@@ -690,9 +726,12 @@ class Orchestrator:
         Returns:
             True if phase completed successfully
         """
+        import time
+
         max_attempts = self.config.max_retries + 1
         is_remediation = False
         previous_issues: list[ComplianceIssue] = []
+        phase_start_time = time.time()
 
         # Start checkpoint for this phase
         self.checkpoint_manager.start_phase(phase.id, phase.title)
@@ -722,6 +761,9 @@ class Orchestrator:
             self.state.create_phase_execution(run_id, phase.id, attempt)
             self.state.update_phase_status(run_id, phase.id, PhaseStatus.RUNNING)
 
+            # Log phase start
+            self._event_logger.log_phase_start(phase.id, phase.title, attempt)
+
             self.notifier.info(
                 f"Phase {phase.id}: {phase.title}",
                 f"Attempt {attempt}/{max_attempts}",
@@ -740,6 +782,9 @@ class Orchestrator:
                     PhaseStatus.FAILED,
                     error_message=result.session_log[:500],
                 )
+                # Log phase failure
+                duration = time.time() - phase_start_time
+                self._event_logger.log_phase_stop(phase.id, PhaseStatus.FAILED, duration)
                 self.notifier.error(
                     f"Phase {phase.id} Execution Failed",
                     f"Exit code: {result.exit_code}",
@@ -765,6 +810,9 @@ class Orchestrator:
             if compliance.passed:
                 self.state.update_phase_status(run_id, phase.id, PhaseStatus.COMPLETED)
                 phase.status = PhaseStatus.COMPLETED  # Update in-memory status for dependency checks
+                # Log phase completion
+                duration = time.time() - phase_start_time
+                self._event_logger.log_phase_stop(phase.id, PhaseStatus.COMPLETED, duration)
                 self.notifier.success(
                     f"Phase {phase.id} Completed",
                     "All compliance checks passed",
@@ -792,6 +840,9 @@ class Orchestrator:
                     )
                     self.state.update_phase_status(run_id, phase.id, PhaseStatus.COMPLETED)
                     phase.status = PhaseStatus.COMPLETED  # Update in-memory status
+                    # Log phase completion (with warnings)
+                    duration = time.time() - phase_start_time
+                    self._event_logger.log_phase_stop(phase.id, PhaseStatus.COMPLETED, duration)
                     # GitHub sync: phase complete (even with warnings)
                     await self._github_sync_phase_complete(phase)
                     # Jira sync: phase complete (even with warnings)
@@ -805,6 +856,12 @@ class Orchestrator:
 
                 case RemediationStrategy.TARGETED_FIX | RemediationStrategy.FULL_RETRY:
                     is_remediation = True
+                    # Log phase rejection with compliance issues
+                    self._event_logger.log_phase_rejection(
+                        phase.id,
+                        "compliance failed",
+                        [i.details for i in compliance.issues],
+                    )
                     self.notifier.warning(
                         f"Phase {phase.id} Compliance Failed",
                         f"Attempt {attempt}/{max_attempts}: {issues_summary}",
@@ -816,6 +873,14 @@ class Orchestrator:
                         run_id,
                         phase.id,
                         PhaseStatus.AWAITING_HUMAN,
+                    )
+                    # Log phase rejection requiring human intervention
+                    duration = time.time() - phase_start_time
+                    self._event_logger.log_phase_stop(phase.id, PhaseStatus.AWAITING_HUMAN, duration)
+                    self._event_logger.log_phase_rejection(
+                        phase.id,
+                        "human intervention required",
+                        [i.details for i in compliance.issues],
                     )
                     self.notifier.alert(
                         f"Phase {phase.id} Needs Human Intervention",
@@ -833,6 +898,14 @@ class Orchestrator:
             phase.id,
             PhaseStatus.FAILED,
             error_message=f"Failed after {max_attempts} attempts",
+        )
+        # Log phase failure after max attempts
+        duration = time.time() - phase_start_time
+        self._event_logger.log_phase_stop(phase.id, PhaseStatus.FAILED, duration)
+        self._event_logger.log_phase_rejection(
+            phase.id,
+            f"max attempts ({max_attempts}) reached",
+            [i.details for i in previous_issues] if previous_issues else None,
         )
         self.notifier.error(
             f"Phase {phase.id} Failed",
@@ -934,11 +1007,13 @@ class Orchestrator:
         # Check if auto-commit is enabled
         if not self.config.auto_commit:
             logger.debug("Auto-commit disabled, skipping commit")
+            self._event_logger.log_commit_skipped(phase.id, "auto-commit disabled")
             return
 
         # Skip commit on failure unless commit_on_failure is enabled
         if not success and not self.config.commit_on_failure:
             logger.debug("Phase failed and commit_on_failure=False, skipping commit")
+            self._event_logger.log_commit_skipped(phase.id, "commit_on_failure disabled")
             return
 
         # Check for changes using git status
@@ -947,6 +1022,7 @@ class Orchestrator:
             return  # Git error occurred
         if not has_changes:
             logger.debug("No changes to commit, skipping")
+            self._event_logger.log_commit_skipped(phase.id, "no changes")
             self.ui.log_raw("[dim]No changes to commit[/dim]")
             return
 
@@ -1042,11 +1118,22 @@ class Orchestrator:
                 # Check if it's just "nothing to commit"
                 if "nothing to commit" in commit_result.stdout.lower():
                     logger.debug("Nothing to commit after staging")
+                    self._event_logger.log_commit_skipped(phase.id, "nothing to commit after staging")
                     return
                 logger.warning(f"Git commit failed: {commit_result.stderr}")
                 self.ui.log_raw(f"[yellow]Auto-commit failed: {commit_result.stderr.strip()}[/yellow]")
                 return
 
+            # Count files changed from commit output
+            import re
+
+            files_changed = 0
+            match = re.search(r"(\d+) files? changed", commit_result.stdout)
+            if match:
+                files_changed = int(match.group(1))
+
+            # Log successful commit
+            self._event_logger.log_commit(phase.id, message, files_changed)
             logger.info(f"Auto-commit successful: {message}")
             self.ui.log_raw(f"[green]Auto-commit: {message}[/green]")
 

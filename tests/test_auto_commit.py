@@ -86,7 +86,7 @@ class TestAutoCommitPhase:
         mock_run.side_effect = [
             MagicMock(returncode=0, stdout="M src/file.py\n"),  # git status
             MagicMock(returncode=0),  # git add
-            MagicMock(returncode=0),  # git commit
+            MagicMock(returncode=0, stdout="1 file changed"),  # git commit
         ]
 
         with patch.object(Orchestrator, "__init__", _noop_init):
@@ -95,6 +95,7 @@ class TestAutoCommitPhase:
             orchestrator.project_root = Path("/test/project")
             orchestrator.master_plan_path = Path("/test/project/plans/MASTER_PLAN.md")
             orchestrator.ui = MagicMock()
+            orchestrator._event_logger = MagicMock()
 
             orchestrator._auto_commit_phase(test_phase, success=True)
 
@@ -111,6 +112,7 @@ class TestAutoCommitPhase:
             orchestrator.config = Config(auto_commit=False)
             orchestrator.project_root = Path("/test/project")
             orchestrator.ui = MagicMock()
+            orchestrator._event_logger = MagicMock()
 
             orchestrator._auto_commit_phase(test_phase, success=True)
 
@@ -127,6 +129,7 @@ class TestAutoCommitPhase:
             orchestrator.config = Config(commit_on_failure=False)
             orchestrator.project_root = Path("/test/project")
             orchestrator.ui = MagicMock()
+            orchestrator._event_logger = MagicMock()
 
             orchestrator._auto_commit_phase(test_phase, success=False)
 
@@ -142,7 +145,7 @@ class TestAutoCommitPhase:
         mock_run.side_effect = [
             MagicMock(returncode=0, stdout="M src/file.py\n"),  # git status
             MagicMock(returncode=0),  # git add
-            MagicMock(returncode=0),  # git commit
+            MagicMock(returncode=0, stdout="1 file changed"),  # git commit
         ]
 
         with patch.object(Orchestrator, "__init__", _noop_init):
@@ -151,6 +154,7 @@ class TestAutoCommitPhase:
             orchestrator.project_root = Path("/test/project")
             orchestrator.master_plan_path = Path("/test/project/plans/MASTER_PLAN.md")
             orchestrator.ui = MagicMock()
+            orchestrator._event_logger = MagicMock()
 
             orchestrator._auto_commit_phase(test_phase, success=False)
 
@@ -170,6 +174,7 @@ class TestAutoCommitPhase:
             orchestrator.config = Config()
             orchestrator.project_root = Path("/test/project")
             orchestrator.ui = MagicMock()
+            orchestrator._event_logger = MagicMock()
 
             orchestrator._auto_commit_phase(test_phase, success=True)
 
@@ -185,7 +190,7 @@ class TestAutoCommitPhase:
         mock_run.side_effect = [
             MagicMock(returncode=0, stdout="M src/file.py\n"),  # git status
             MagicMock(returncode=0),  # git add
-            MagicMock(returncode=0),  # git commit
+            MagicMock(returncode=0, stdout="1 file changed"),  # git commit
         ]
 
         with patch.object(Orchestrator, "__init__", _noop_init):
@@ -194,6 +199,7 @@ class TestAutoCommitPhase:
             orchestrator.project_root = Path("/test/project")
             orchestrator.master_plan_path = Path("/test/project/plans/MASTER_PLAN.md")
             orchestrator.ui = MagicMock()
+            orchestrator._event_logger = MagicMock()
 
             orchestrator._auto_commit_phase(test_phase, success=True)
 
@@ -215,7 +221,7 @@ class TestAutoCommitPhase:
         mock_run.side_effect = [
             MagicMock(returncode=0, stdout="M src/file.py\n"),  # git status
             MagicMock(returncode=0),  # git add
-            MagicMock(returncode=0),  # git commit
+            MagicMock(returncode=0, stdout="1 file changed"),  # git commit
         ]
 
         with patch.object(Orchestrator, "__init__", _noop_init):
@@ -224,6 +230,7 @@ class TestAutoCommitPhase:
             orchestrator.project_root = Path("/test/project")
             orchestrator.master_plan_path = Path("/test/project/plans/MASTER_PLAN.md")
             orchestrator.ui = MagicMock()
+            orchestrator._event_logger = MagicMock()
 
             orchestrator._auto_commit_phase(test_phase, success=True)
 
