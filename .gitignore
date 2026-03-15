@@ -30,3 +30,14 @@ notes/
 generated-plan/
 cms.md
 phase1-completion-notes.md
+
+# Archives (historical, not portfolio material)
+**/archives/
+
+# Plan user data
+plans/*-answers.json
+plans/v*/
+
+# Cleaning plans (internal)
+CLEANING_PLAN.md
+CLEANING_FIX.md
