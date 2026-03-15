@@ -30,8 +30,8 @@ In standard mode, install Debussy as a dev dependency in your project:
 # Add to your project from GitHub
 uv add --dev git+https://github.com/matt-grain/Claude-Debussy.git
 
-# Or with LTM support (cross-phase memory)
-uv add --dev "claude-debussy[ltm] @ git+https://github.com/matt-grain/Claude-Debussy.git"
+# Or with Anima support (cross-phase memory)
+uv add --dev "claude-debussy[anima] @ git+https://github.com/matt-grain/Claude-Debussy.git"
 
 # Run from your project directory
 uv run debussy run docs/master-plan.md
@@ -248,8 +248,8 @@ Initialize a target project for Debussy orchestration.
 # Basic setup - installs agent, skill, and commands
 debussy init /path/to/project
 
-# With LTM memory support (cross-phase memory)
-debussy init /path/to/project --with-ltm
+# With Anima memory support (cross-phase memory)
+debussy init /path/to/project --with-anima
 
 # Force overwrite existing files
 debussy init /path/to/project --force
@@ -259,7 +259,7 @@ This creates:
 - `.claude/agents/debussy.md` - Debussy worker agent identity
 - `.claude/skills/debussy.md` - Command documentation
 - `.claude/commands/debussy-*.md` - Slash commands (`/debussy-done`, `/debussy-progress`, `/debussy-status`)
-- `.claude/commands/please-remember.md`, `recall.md` - LTM commands (with `--with-ltm`)
+- `.claude/commands/please-remember.md`, `recall.md` - Anima commands (with `--with-anima`)
 
 ## Configuration
 
@@ -432,16 +432,16 @@ debussy status
 debussy history
 ```
 
-## LTM Integration (Optional)
+## Anima Integration (Optional)
 
-Debussy can integrate with [Claude-LTM](https://github.com/matt-grain/Claude-LTM) for cross-phase memory:
+Debussy can integrate with [Anima](https://github.com/matt-grain/Anima) for cross-phase memory:
 
 ```bash
-# Install with LTM support
-pip install 'claude-debussy[ltm]'
+# Install with Anima support
+pip install 'claude-debussy[anima]'
 
 # Initialize project with memory commands
-debussy init /path/to/project --with-ltm
+debussy init /path/to/project --with-anima
 ```
 
 When enabled, the spawned Debussy agent can:

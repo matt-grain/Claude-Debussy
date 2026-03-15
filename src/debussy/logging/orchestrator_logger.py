@@ -218,7 +218,7 @@ class OrchestratorLogger:
         Args:
             model: The Claude model being used.
             sandbox_mode: Sandbox mode (none, devcontainer).
-            learnings_enabled: Whether LTM learnings are enabled.
+            learnings_enabled: Whether Anima learnings are enabled.
             auto_commit: Whether auto-commit is enabled.
             interactive: Whether running in interactive TUI mode.
         """

@@ -65,7 +65,7 @@ debussy run MASTER_PLAN.md --phase 3
 debussy run MASTER_PLAN.md --dry-run
 ```
 
-### LTM Learnings
+### Anima Learnings
 
 Enable workers to save/recall learnings across runs:
 

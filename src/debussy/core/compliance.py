@@ -26,8 +26,8 @@ REQUIRED_NOTES_SECTIONS = [
     "## Files Modified",
 ]
 
-# Section required when LTM learnings is enabled
-LTM_LEARNINGS_SECTION = "## Learnings"
+# Section required when Anima learnings is enabled
+ANIMA_LEARNINGS_SECTION = "## Learnings"
 
 
 class ComplianceChecker:
@@ -37,11 +37,11 @@ class ComplianceChecker:
         self,
         gate_runner: GateRunner,
         project_root: Path | None = None,
-        ltm_enabled: bool = False,
+        anima_enabled: bool = False,
     ) -> None:
         self.gate_runner = gate_runner
         self.project_root = project_root or Path.cwd()
-        self.ltm_enabled = ltm_enabled
+        self.anima_enabled = anima_enabled
 
     async def verify_completion(
         self,
@@ -158,14 +158,14 @@ class ComplianceChecker:
                 )
             )
 
-        # Check for ## Learnings section when LTM is enabled
+        # Check for ## Learnings section when Anima is enabled
         # High severity triggers TARGETED_FIX remediation to ask worker for learnings
-        if self.ltm_enabled and LTM_LEARNINGS_SECTION not in content:
+        if self.anima_enabled and ANIMA_LEARNINGS_SECTION not in content:
             issues.append(
                 ComplianceIssue(
                     type=ComplianceIssueType.NOTES_INCOMPLETE,
                     severity="high",
-                    details=f"Missing {LTM_LEARNINGS_SECTION} section (LTM enabled)",
+                    details=f"Missing {ANIMA_LEARNINGS_SECTION} section (Anima enabled)",
                 )
             )
 

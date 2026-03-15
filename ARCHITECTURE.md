@@ -43,7 +43,7 @@ src/debussy/
 ├── parsers/
 │   ├── master.py             # parse_master_plan() — parse master plan Markdown
 │   ├── phase.py              # parse_phase() — parse individual phase Markdown files
-│   └── learnings.py          # extract_learnings() — extract LTM learnings from notes
+│   └── learnings.py          # extract_learnings() — extract Anima learnings from notes
 ├── converters/
 │   ├── plan_converter.py     # Convert GitHub issues → MasterPlan YAML/Markdown
 │   ├── prompts.py            # Prompt templates for plan generation

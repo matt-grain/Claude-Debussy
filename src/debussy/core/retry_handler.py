@@ -21,7 +21,7 @@ class RetryHandlerMixin:
     Mixed into Orchestrator — all methods have access to full self state.
     """
 
-    def _auto_commit_phase(self,phase: Phase, success: bool) -> None:
+    def _auto_commit_phase(self, phase: Phase, success: bool) -> None:
         """Auto-commit changes at phase boundary.
 
         Args:
@@ -79,7 +79,7 @@ class RetryHandlerMixin:
             logger.warning("Git status timed out, skipping auto-commit")
             return None
 
-    def _execute_git_commit(self,phase: Phase, success: bool) -> None:
+    def _execute_git_commit(self, phase: Phase, success: bool) -> None:
         """Execute git add and commit for a phase.
 
         Args:

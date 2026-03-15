@@ -33,11 +33,12 @@ RUN useradd -m -s /bin/bash -u 1001 claude \
 USER claude
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Install Debussy and LTM as CLI tools (for /debussy-done and /remember skills)
+# Install Debussy and Anima as CLI tools (for /debussy-done and /remember skills)
 # These are needed inside the container for Claude to signal phase completion and save learnings
 # Install from GitHub since these packages are not published to PyPI
+# Pass ANTHROPIC_API_KEY as env var at runtime (never copy session tokens)
 RUN /home/claude/.local/bin/uv tool install git+https://github.com/matt-grain/Claude-Debussy.git \
-    && /home/claude/.local/bin/uv tool install git+https://github.com/matt-grain/claude-ltm.git
+    && /home/claude/.local/bin/uv tool install git+https://github.com/matt-grain/Anima.git
 USER root
 
 # Install Claude Code globally

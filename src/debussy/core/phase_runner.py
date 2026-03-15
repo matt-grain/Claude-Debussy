@@ -85,7 +85,7 @@ class PhaseRunnerMixin:
                     final_prompt = f"{restart_context}\n\n---\n\n{effective_prompt}"
                 else:
                     # Build phase prompt and prepend context
-                    original_prompt = self.claude._build_phase_prompt(phase, with_ltm=self.config.learnings)
+                    original_prompt = self.claude._build_phase_prompt(phase, with_anima=self.config.learnings)
                     final_prompt = f"{restart_context}\n\n---\n\n{original_prompt}"
                 logger.info(f"Injecting restart context (attempt {restart_count + 1})")
 
@@ -184,7 +184,7 @@ class PhaseRunnerMixin:
             )
 
             # Build prompt (normal or remediation)
-            prompt = self.claude.build_remediation_prompt(phase, previous_issues, with_ltm=self.config.learnings) if is_remediation else None
+            prompt = self.claude.build_remediation_prompt(phase, previous_issues, with_anima=self.config.learnings) if is_remediation else None
 
             # Spawn Claude worker (with restart logic for non-remediation runs)
             result = await self._execute_phase_internal(run_id, phase, prompt, is_remediation)
@@ -235,9 +235,9 @@ class PhaseRunnerMixin:
                 await self._github_sync_phase_complete(phase)
                 # Jira sync: phase complete
                 await self._jira_sync_phase_complete(phase)
-                # Save learnings to LTM if enabled
+                # Save learnings to Anima if enabled
                 if self.config.learnings:
-                    self._save_learnings_to_ltm(phase)
+                    self._save_learnings_to_anima(phase)
                 # Auto-commit at phase boundary
                 self._auto_commit_phase(phase, success=True)
                 return True
@@ -261,9 +261,9 @@ class PhaseRunnerMixin:
                     await self._github_sync_phase_complete(phase)
                     # Jira sync: phase complete (even with warnings)
                     await self._jira_sync_phase_complete(phase)
-                    # Save learnings to LTM if enabled (even with warnings)
+                    # Save learnings to Anima if enabled (even with warnings)
                     if self.config.learnings:
-                        self._save_learnings_to_ltm(phase)
+                        self._save_learnings_to_anima(phase)
                     # Auto-commit at phase boundary (success with warnings)
                     self._auto_commit_phase(phase, success=True)
                     return True

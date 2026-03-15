@@ -80,7 +80,7 @@ class Config(BaseModel):
     strict_compliance: bool = Field(default=True, description="Fail on any compliance issue")
     learnings: bool = Field(
         default=False,
-        description="Enable LTM learnings - workers save insights via /remember",
+        description="Enable Anima learnings - workers save insights via /remember",
     )
     sandbox_mode: Literal["none", "devcontainer"] = Field(
         default="none",

@@ -296,7 +296,7 @@ def register(app: typer.Typer) -> None:
             typer.Option(
                 "--learnings",
                 "-L",
-                help="Enable LTM learnings: workers save insights via /remember and recall via /recall",
+                help="Enable Anima learnings: workers save insights via /remember and recall via /recall",
             ),
         ] = False,
         sandbox: Annotated[

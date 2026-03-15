@@ -15,7 +15,7 @@ built from `src/debussy/docker/Dockerfile.sandbox`. The container:
 - Mounts only the target project directory as `/workspace`, not the host home or `.config`.
 - Applies an `iptables`/`ipset` firewall (via `init-firewall.sh`) that defaults to DROP, allowing only
   the Anthropic API, GitHub, npm, PyPI, and local network — blocking arbitrary internet access.
-- Installs the `debussy` and `claude-ltm` CLI tools inside the container so Claude can signal completion
+- Installs the `debussy` and `anima` CLI tools inside the container so Claude can signal completion
   (`/debussy-done`) and save learnings without host access.
 
 **Alternatives considered:**

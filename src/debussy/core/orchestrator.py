@@ -62,11 +62,11 @@ class Orchestrator(PhaseRunnerMixin, RetryHandlerMixin, CompletionMixin):
             self.config.timeout,
             model=self.config.model,
             output_mode=self.config.output,
-            with_ltm=self.config.learnings,
+            with_anima=self.config.learnings,
             sandbox_mode=self.config.sandbox_mode,
         )
         self.gates = GateRunner(self.project_root)
-        self.checker = ComplianceChecker(self.gates, self.project_root, ltm_enabled=self.config.learnings)
+        self.checker = ComplianceChecker(self.gates, self.project_root, anima_enabled=self.config.learnings)
 
         # Initialize notifier based on config
         if notifier is None:

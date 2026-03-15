@@ -115,6 +115,10 @@ exclude = [
     "src/debussy/core/retry_handler.py",
 ]
 
+[tool.ty.rules]
+# Suppress warnings for type: ignore comments needed by pyright
+unused-ignore-comment = "ignore"
+
 [tool.bandit]
 exclude_dirs = ["tests", ".venv"]
 skips = ["B101"]  # assert is fine in non-production code

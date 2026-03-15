@@ -489,30 +489,30 @@ class TestClaudeRunnerPrompts:
 
         assert "Complete all required sections" in prompt
 
-    def test_build_phase_prompt_with_ltm(
+    def test_build_phase_prompt_with_anima(
         self,
         claude_runner: ClaudeRunner,
     ) -> None:
-        """Test prompt includes LTM learnings instructions when enabled."""
+        """Test prompt includes Anima learnings instructions when enabled."""
         phase = Phase(
             id="1",
             title="Test",
             path=Path("test.md"),
             status=PhaseStatus.PENDING,
         )
-        prompt = claude_runner._build_phase_prompt(phase, with_ltm=True)
+        prompt = claude_runner._build_phase_prompt(phase, with_anima=True)
 
-        assert "ADDITIONAL Process Wrapper Step (LTM Enabled)" in prompt
+        assert "ADDITIONAL Process Wrapper Step (Anima Enabled)" in prompt
         assert "## Learnings" in prompt
         assert "/remember" in prompt
         assert "phase:1" in prompt
         assert "agent:Debussy" in prompt
 
-    def test_build_phase_prompt_with_ltm_recall(
+    def test_build_phase_prompt_with_anima_recall(
         self,
         temp_dir: Path,
     ) -> None:
-        """Test prompt includes /recall instruction when LTM enabled and notes_input exists."""
+        """Test prompt includes /recall instruction when Anima enabled and notes_input exists."""
         # Create a notes input file
         notes_file = temp_dir / "NOTES_phase_0.md"
         notes_file.write_text("Previous notes")
@@ -525,33 +525,33 @@ class TestClaudeRunnerPrompts:
             notes_input=notes_file,
         )
         runner = ClaudeRunner(temp_dir)
-        prompt = runner._build_phase_prompt(phase, with_ltm=True)
+        prompt = runner._build_phase_prompt(phase, with_anima=True)
 
         assert "Recall Previous Learnings" in prompt
         assert "/recall phase:1" in prompt
 
-    def test_build_phase_prompt_without_ltm(
+    def test_build_phase_prompt_without_anima(
         self,
         claude_runner: ClaudeRunner,
     ) -> None:
-        """Test prompt does NOT include LTM instructions when disabled."""
+        """Test prompt does NOT include Anima instructions when disabled."""
         phase = Phase(
             id="1",
             title="Test",
             path=Path("test.md"),
             status=PhaseStatus.PENDING,
         )
-        prompt = claude_runner._build_phase_prompt(phase, with_ltm=False)
+        prompt = claude_runner._build_phase_prompt(phase, with_anima=False)
 
-        assert "ADDITIONAL Process Wrapper Step (LTM Enabled)" not in prompt
+        assert "ADDITIONAL Process Wrapper Step (Anima Enabled)" not in prompt
         assert "/remember" not in prompt
 
-    def test_build_remediation_prompt_with_ltm(
+    def test_build_remediation_prompt_with_anima(
         self,
         claude_runner: ClaudeRunner,
         phase_for_prompt: Phase,
     ) -> None:
-        """Test remediation prompt includes LTM recall and save instructions."""
+        """Test remediation prompt includes Anima recall and save instructions."""
         issues = [
             ComplianceIssue(
                 type=ComplianceIssueType.GATES_FAILED,
@@ -560,7 +560,7 @@ class TestClaudeRunnerPrompts:
             ),
         ]
 
-        prompt = claude_runner.build_remediation_prompt(phase_for_prompt, issues, with_ltm=True)
+        prompt = claude_runner.build_remediation_prompt(phase_for_prompt, issues, with_anima=True)
 
         assert "Recall Previous Attempts" in prompt
         assert "/recall phase:1" in prompt
@@ -569,12 +569,12 @@ class TestClaudeRunnerPrompts:
         assert "priority HIGH" in prompt
         assert "remediation" in prompt
 
-    def test_build_remediation_prompt_without_ltm(
+    def test_build_remediation_prompt_without_anima(
         self,
         claude_runner: ClaudeRunner,
         phase_for_prompt: Phase,
     ) -> None:
-        """Test remediation prompt does NOT include LTM when disabled."""
+        """Test remediation prompt does NOT include Anima when disabled."""
         issues = [
             ComplianceIssue(
                 type=ComplianceIssueType.GATES_FAILED,
@@ -583,7 +583,7 @@ class TestClaudeRunnerPrompts:
             ),
         ]
 
-        prompt = claude_runner.build_remediation_prompt(phase_for_prompt, issues, with_ltm=False)
+        prompt = claude_runner.build_remediation_prompt(phase_for_prompt, issues, with_anima=False)
 
         assert "Recall Previous Attempts" not in prompt
         assert "Save Remediation Learnings" not in prompt

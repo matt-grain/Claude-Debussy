@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class CompletionMixin:
     """Mixin for post-phase completion side-effects.
 
-    Handles GitHub/Jira sync updates, LTM learnings, and feature completion recording.
+    Handles GitHub/Jira sync updates, Anima learnings, and feature completion recording.
     Mixed into Orchestrator — all methods have access to full self state.
     """
 
@@ -65,8 +65,8 @@ class CompletionMixin:
         except Exception as e:
             logger.warning(f"Jira sync phase complete failed: {e}")
 
-    def _save_learnings_to_ltm(self, phase: Phase) -> None:
-        """Extract learnings from phase notes and save to LTM."""
+    def _save_learnings_to_anima(self, phase: Phase) -> None:
+        """Extract learnings from phase notes and save to Anima."""
         import contextlib
         import subprocess
 
@@ -85,7 +85,7 @@ class CompletionMixin:
                     [
                         "uv",
                         "run",
-                        "ltm",
+                        "anima",
                         "remember",
                         "--kind",
                         "learnings",

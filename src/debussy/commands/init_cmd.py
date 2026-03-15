@@ -11,10 +11,10 @@ from rich.console import Console
 console = Console()
 
 
-def _check_ltm_available() -> bool:
-    """Check if LTM is installed."""
+def _check_anima_available() -> bool:
+    """Check if Anima is installed."""
     try:
-        import ltm  # noqa: F401
+        import anima  # noqa: F401  # pyright: ignore[reportMissingImports]  # ty: ignore[unresolved-import]
 
         return True
     except ImportError:
@@ -58,9 +58,9 @@ def register(app: typer.Typer) -> None:
             bool,
             typer.Option("--force", "-f", help="Overwrite existing files"),
         ] = False,
-        with_ltm: Annotated[
+        with_anima: Annotated[
             bool,
-            typer.Option("--with-ltm", help="Include LTM commands for memory support"),
+            typer.Option("--with-anima", help="Include Anima commands for memory support"),
         ] = False,
     ) -> None:
         """Initialize a target project for Debussy orchestration.
@@ -68,14 +68,14 @@ def register(app: typer.Typer) -> None:
         Sets up .claude/agents/debussy.md, .claude/skills/debussy.md, and
         .claude/commands/debussy-*.md files for the spawned Claude agent.
 
-        Use --with-ltm to also install LTM memory commands (/remember, /recall).
+        Use --with-anima to also install Anima memory commands (/remember, /recall).
         """
-        # Check LTM availability if requested
-        if with_ltm and not _check_ltm_available():
-            console.print("[yellow]LTM not installed.[/yellow]")
-            console.print("Install with: pip install 'claude-debussy[ltm]'")
-            console.print("Continuing without LTM support...")
-            with_ltm = False
+        # Check Anima availability if requested
+        if with_anima and not _check_anima_available():
+            console.print("[yellow]Anima not installed.[/yellow]")
+            console.print("Install with: pip install 'claude-debussy[anima]'")
+            console.print("Continuing without Anima support...")
+            with_anima = False
 
         # Create .claude directory structure
         claude_dir = target / ".claude"
@@ -98,23 +98,23 @@ def register(app: typer.Typer) -> None:
         for cmd_name in ["debussy-done", "debussy-progress", "debussy-status"]:
             _install_resource("commands", f"{cmd_name}.md", commands_dir / f"{cmd_name}.md", force, f"command: /{cmd_name}")
 
-        # Install LTM commands via ltm setup if requested
-        if with_ltm:
+        # Install Anima commands via anima setup if requested
+        if with_anima:
             import subprocess
 
             result = subprocess.run(
-                ["uv", "run", "ltm", "setup", str(target)],
+                ["uv", "run", "anima", "setup", str(target)],
                 capture_output=True,
                 text=True,
                 cwd=target,
                 check=False,  # Handle errors ourselves
             )
             if result.returncode == 0:
-                console.print("[green]LTM commands installed via ltm setup[/green]")
+                console.print("[green]Anima commands installed via anima setup[/green]")
             else:
-                console.print(f"[yellow]LTM setup warning: {result.stderr.strip()}[/yellow]")
+                console.print(f"[yellow]Anima setup warning: {result.stderr.strip()}[/yellow]")
 
-        # Always create config (with learnings enabled if --with-ltm)
+        # Always create config (with learnings enabled if --with-anima)
         from debussy.config import Config
 
         debussy_dir = target / ".debussy"
@@ -125,14 +125,14 @@ def register(app: typer.Typer) -> None:
             console.print(f"[yellow]Config already exists: {config_path}[/yellow]")
             console.print("[dim]Use --force to overwrite.[/dim]")
         else:
-            config = Config(learnings=with_ltm)
+            config = Config(learnings=with_anima)
             config.save(config_path)
-            learnings_note = " with learnings enabled" if with_ltm else ""
+            learnings_note = " with learnings enabled" if with_anima else ""
             console.print(f"[green]Created {config_path}{learnings_note}[/green]")
 
         console.print("\n[bold]Setup complete![/bold]")
-        if with_ltm:
+        if with_anima:
             console.print("Debussy agent has access to orchestration + memory commands.")
         else:
             console.print("Debussy agent has access to orchestration commands.")
-            console.print("[dim]Tip: Use --with-ltm to enable cross-phase memory.[/dim]")
+            console.print("[dim]Tip: Use --with-anima to enable cross-phase memory.[/dim]")

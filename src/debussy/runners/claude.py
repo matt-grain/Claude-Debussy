@@ -241,7 +241,7 @@ class ClaudeRunner(StreamingMixin):
         output_callback: Callable[[str], None] | None = None,
         token_stats_callback: Callable[[TokenStats], None] | None = None,
         agent_change_callback: Callable[[str], None] | None = None,
-        with_ltm: bool = False,
+        with_anima: bool = False,
         sandbox_mode: Literal["none", "devcontainer"] = "none",
     ) -> None:
         self.project_root = project_root
@@ -260,7 +260,7 @@ class ClaudeRunner(StreamingMixin):
         self._needs_line_prefix: bool = True  # Emit prefix on next line output
         # Track active Task tool_use_ids -> subagent_type for subagent output display
         self._pending_task_ids: dict[str, str] = {}
-        self._with_ltm = with_ltm  # Enable LTM learnings in prompts
+        self._with_anima = with_anima  # Enable Anima learnings in prompts
         self._sandbox_mode = sandbox_mode  # Docker sandbox mode
         # Sandbox log file for Windows terminal buffering workaround
         self._sandbox_log_file: TextIO | None = None
@@ -663,7 +663,7 @@ class ClaudeRunner(StreamingMixin):
             If stop was requested (context limit), success=False and
             session_log starts with "CONTEXT_LIMIT_RESTART".
         """
-        prompt = custom_prompt or self._build_phase_prompt(phase, with_ltm=self._with_ltm)
+        prompt = custom_prompt or self._build_phase_prompt(phase, with_anima=self._with_anima)
 
         # Reset agent tracking and stop flag at start of each phase
         self._reset_active_agent("Debussy")
@@ -811,21 +811,21 @@ class ClaudeRunner(StreamingMixin):
                 pid=process.pid if process else None,
             )
 
-    def _build_phase_prompt(self, phase: Phase, with_ltm: bool = False) -> str:
+    def _build_phase_prompt(self, phase: Phase, with_anima: bool = False) -> str:
         """Build the prompt for a phase execution.
 
         Delegates to prompt_builder.build_phase_prompt.
         """
-        return build_phase_prompt(phase, with_ltm=with_ltm)
+        return build_phase_prompt(phase, with_anima=with_anima)
 
     def build_remediation_prompt(
         self,
         phase: Phase,
         issues: list[ComplianceIssue],
-        with_ltm: bool = False,
+        with_anima: bool = False,
     ) -> str:
         """Build a remediation prompt for a failed compliance check.
 
         Delegates to prompt_builder.build_remediation_prompt.
         """
-        return build_remediation_prompt(phase, issues, with_ltm=with_ltm)
+        return build_remediation_prompt(phase, issues, with_anima=with_anima)

@@ -14,12 +14,12 @@ def _to_posix(p: Path | None) -> str:
     return str(p).replace("\\", "/") if p else ""
 
 
-def build_phase_prompt(phase: Phase, with_ltm: bool = False) -> str:
+def build_phase_prompt(phase: Phase, with_anima: bool = False) -> str:
     """Build the prompt for a phase execution.
 
     Args:
         phase: The phase to build a prompt for.
-        with_ltm: Whether to include LTM (Long-Term Memory) recall/save steps.
+        with_anima: Whether to include Anima (long-term memory) recall/save steps.
 
     Returns:
         The fully-formatted prompt string.
@@ -48,19 +48,19 @@ You MUST invoke these agents using the Task tool: {agents_list}
 Use the Write tool to write notes to: {notes_output_str}
 """
 
-    # LTM context recall for non-first phases
+    # Anima context recall for non-first phases
     ltm_recall = ""
-    if with_ltm and phase.notes_input:
+    if with_anima and phase.notes_input:
         ltm_recall = f"""
 ## Recall Previous Learnings
 Run `/recall phase:{phase.id}` to retrieve learnings from previous runs of this phase.
 """
 
-    # LTM learnings section - ADD to Process Wrapper steps
+    # Anima learnings section - ADD to Process Wrapper steps
     ltm_learnings = ""
-    if with_ltm:
+    if with_anima:
         ltm_learnings = f"""
-## ADDITIONAL Process Wrapper Step (LTM Enabled)
+## ADDITIONAL Process Wrapper Step (Anima Enabled)
 **IMPORTANT**: Add this step to the Process Wrapper BEFORE signaling completion:
 
 - [ ] **Output `## Learnings` section in your notes file** with insights from this phase:
@@ -74,11 +74,11 @@ Run `/recall phase:{phase.id}` to retrieve learnings from previous runs of this 
   /remember --priority MEDIUM --tags phase:{phase.id},agent:Debussy "learning content"
   ```
 
-This step is MANDATORY when LTM is enabled. Do not skip it.
+This step is MANDATORY when Anima is enabled. Do not skip it.
 """
 
-    # Build completion steps - vary based on LTM
-    if with_ltm:
+    # Build completion steps - vary based on Anima
+    if with_anima:
         completion_steps = f"""
 ## Completion
 
@@ -129,13 +129,13 @@ Read the phase plan file and follow the Process Wrapper EXACTLY.
 """
 
 
-def build_remediation_prompt(phase: Phase, issues: list[ComplianceIssue], with_ltm: bool = False) -> str:
+def build_remediation_prompt(phase: Phase, issues: list[ComplianceIssue], with_anima: bool = False) -> str:
     """Build a remediation prompt for a failed compliance check.
 
     Args:
         phase: The phase that failed compliance.
         issues: The list of compliance issues found.
-        with_ltm: Whether to include LTM recall/save steps.
+        with_anima: Whether to include Anima recall/save steps.
 
     Returns:
         The fully-formatted remediation prompt string.
@@ -160,18 +160,18 @@ def build_remediation_prompt(phase: Phase, issues: list[ComplianceIssue], with_l
     default_action = "- Review and fix all issues"
     actions_text = "\n".join(required_actions) if required_actions else default_action
 
-    # LTM recall for remediation context
+    # Anima recall for remediation context
     ltm_section = ""
-    if with_ltm:
+    if with_anima:
         ltm_section = f"""
-## Recall Previous Attempts (LTM Enabled)
+## Recall Previous Attempts (Anima Enabled)
 Use the Skill tool to run: /recall phase:{phase.id}
 This may include fixes for similar issues encountered before.
 """
 
-    # LTM learnings for remediation
+    # Anima learnings for remediation
     ltm_learnings = ""
-    if with_ltm:
+    if with_anima:
         ltm_learnings = f"""
 ## Save Remediation Learnings
 After fixing the issues, use the Skill tool to save what you learned:
