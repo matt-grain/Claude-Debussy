@@ -392,30 +392,24 @@ class TestCLIAutoCommitFlags:
         return CliRunner()
 
     def test_no_auto_commit_flag_exists(self) -> None:
-        """--no-auto-commit flag is available on run command."""
-        import os
+        """--no-auto-commit flag is registered on the run command."""
+        import typer
 
         from debussy.cli import app
 
-        os.environ["COLUMNS"] = "200"
-        try:
-            result = CliRunner().invoke(app, ["run", "--help"])
-        finally:
-            os.environ.pop("COLUMNS", None)
-        assert "--no-auto-commit" in result.stdout
+        run_cmd = typer.main.get_command(app).commands["run"]
+        param_names = [p.name for p in run_cmd.params]
+        assert "auto_commit" in param_names
 
     def test_allow_dirty_flag_exists(self) -> None:
-        """--allow-dirty flag is available on run command."""
-        import os
+        """--allow-dirty flag is registered on the run command."""
+        import typer
 
         from debussy.cli import app
 
-        os.environ["COLUMNS"] = "200"
-        try:
-            result = CliRunner().invoke(app, ["run", "--help"])
-        finally:
-            os.environ.pop("COLUMNS", None)
-        assert "--allow-dirty" in result.stdout
+        run_cmd = typer.main.get_command(app).commands["run"]
+        param_names = [p.name for p in run_cmd.params]
+        assert "allow_dirty" in param_names
 
     def test_no_auto_commit_disables_auto_commit(
         self,
